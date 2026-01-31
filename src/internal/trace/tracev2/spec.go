@@ -73,6 +73,11 @@ type EventSpec struct {
 	// with. If Experiment is not NoExperiment, then the event is experimental
 	// and will be exposed as an EventExperiment.
 	Experiment Experiment
+
+	// Category indicates which event category this event belongs to.
+	// Used for filtering events at emission time. If not set (zero value),
+	// the event is considered a structural event and is always emitted.
+	Category EventCategory
 }
 
 // EventArgTypes is a list of valid argument types for use in Args.
@@ -105,3 +110,55 @@ type Experiment uint
 
 // NoExperiment is the reserved ID 0 indicating no experiment.
 const NoExperiment Experiment = 0
+
+// EventCategory groups related events for filtering purposes.
+// Categories are represented as a bitmask to allow efficient filtering
+// at the point of event emission.
+type EventCategory uint8
+
+const (
+	// CategoryCore contains essential runtime events (goroutine, GC, P scheduling).
+	// These events are always enabled when tracing is active.
+	CategoryCore EventCategory = 1 << iota
+
+	// CategoryHTTP contains HTTP client and server request tracing events.
+	CategoryHTTP
+
+	// CategorySQL contains database query tracing events.
+	CategorySQL
+
+	// CategoryTLS contains TLS handshake tracing events.
+	CategoryTLS
+
+	// CategoryNet contains network-level events (DNS, TCP connect).
+	CategoryNet
+
+	// CategoryCustom contains user annotation events (tasks, regions, logs).
+	CategoryCustom
+
+	// CategoryAll enables all event categories.
+	CategoryAll = CategoryCore | CategoryHTTP | CategorySQL | CategoryTLS | CategoryNet | CategoryCustom
+
+	// CategoryDefault is the default set of enabled categories.
+	// Includes core runtime events and user annotations.
+	CategoryDefault = CategoryCore | CategoryCustom
+)
+
+// String returns a human-readable name for the category.
+func (c EventCategory) String() string {
+	switch c {
+	case CategoryCore:
+		return "Core"
+	case CategoryHTTP:
+		return "HTTP"
+	case CategorySQL:
+		return "SQL"
+	case CategoryTLS:
+		return "TLS"
+	case CategoryNet:
+		return "Net"
+	case CategoryCustom:
+		return "Custom"
+	}
+	return "Unknown"
+}

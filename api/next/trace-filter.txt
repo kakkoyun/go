@@ -1,0 +1,85 @@
+pkg runtime/trace, type EventFilter uint32 #XXXXX
+pkg runtime/trace, const FilterCore EventFilter #XXXXX
+pkg runtime/trace, const FilterHTTP EventFilter #XXXXX
+pkg runtime/trace, const FilterSQL EventFilter #XXXXX
+pkg runtime/trace, const FilterTLS EventFilter #XXXXX
+pkg runtime/trace, const FilterNet EventFilter #XXXXX
+pkg runtime/trace, const FilterCustom EventFilter #XXXXX
+pkg runtime/trace, const FilterAll EventFilter #XXXXX
+pkg runtime/trace, const FilterDefault EventFilter #XXXXX
+pkg runtime/trace, func SetEventFilter(EventFilter) #XXXXX
+pkg runtime/trace, func GetEventFilter() EventFilter #XXXXX
+pkg runtime/trace, func SetSampleRate(float64) #XXXXX
+pkg runtime/trace, func GetSampleRate() float64 #XXXXX
+pkg runtime/trace, type HTTPVersion uint8 #XXXXX
+pkg runtime/trace, const HTTPVersionUnknown HTTPVersion #XXXXX
+pkg runtime/trace, const HTTPVersion10 HTTPVersion #XXXXX
+pkg runtime/trace, const HTTPVersion11 HTTPVersion #XXXXX
+pkg runtime/trace, const HTTPVersion2 HTTPVersion #XXXXX
+pkg runtime/trace, const HTTPVersion3 HTTPVersion #XXXXX
+pkg runtime/trace, method (HTTPVersion) String() string #XXXXX
+pkg runtime/trace, type HTTPErrorKind uint8 #XXXXX
+pkg runtime/trace, const HTTPErrorNone HTTPErrorKind #XXXXX
+pkg runtime/trace, const HTTPErrorDNS HTTPErrorKind #XXXXX
+pkg runtime/trace, const HTTPErrorConnect HTTPErrorKind #XXXXX
+pkg runtime/trace, const HTTPErrorTLS HTTPErrorKind #XXXXX
+pkg runtime/trace, const HTTPErrorTimeout HTTPErrorKind #XXXXX
+pkg runtime/trace, const HTTPErrorCanceled HTTPErrorKind #XXXXX
+pkg runtime/trace, const HTTPErrorProtocol HTTPErrorKind #XXXXX
+pkg runtime/trace, const HTTPErrorOther HTTPErrorKind #XXXXX
+pkg runtime/trace, method (HTTPErrorKind) String() string #XXXXX
+pkg runtime/trace, method (*HTTPSpan) SetContentLength(int64) #XXXXX
+pkg runtime/trace, method (*HTTPSpan) SetError(HTTPErrorKind) #XXXXX
+pkg runtime/trace, method (*HTTPSpan) EndWithError(HTTPErrorKind, string) #XXXXX
+pkg runtime/trace, func HTTPServerRequest(context.Context, TraceContext, string) *HTTPSpan #XXXXX
+pkg runtime/trace, func HTTPClientRequest(context.Context, TraceContext, string) *HTTPSpan #XXXXX
+pkg runtime/trace, func WithSpan(context.Context, TraceContext) context.Context #XXXXX
+pkg runtime/trace, func SpanFromContext(context.Context) (TraceContext, bool) #XXXXX
+pkg runtime/trace, func SanitizeURL(string) string #XXXXX
+pkg runtime/trace, func SetURLSanitizer(func(string) string) #XXXXX
+pkg runtime/trace, func ParseTraceState(string) map[string]string #XXXXX
+pkg runtime/trace, func FormatTraceState(map[string]string) string #XXXXX
+pkg runtime/trace, type TraceContext struct, State string #XXXXX
+pkg runtime/trace, type SQLErrorCode uint8 #XXXXX
+pkg runtime/trace, const SQLErrorNone SQLErrorCode #XXXXX
+pkg runtime/trace, const SQLErrorTimeout SQLErrorCode #XXXXX
+pkg runtime/trace, const SQLErrorCanceled SQLErrorCode #XXXXX
+pkg runtime/trace, const SQLErrorConnection SQLErrorCode #XXXXX
+pkg runtime/trace, const SQLErrorSyntax SQLErrorCode #XXXXX
+pkg runtime/trace, const SQLErrorConstraint SQLErrorCode #XXXXX
+pkg runtime/trace, const SQLErrorOther SQLErrorCode #XXXXX
+pkg runtime/trace, method (SQLErrorCode) String() string #XXXXX
+pkg runtime/trace, type SQLSpan struct #XXXXX
+pkg runtime/trace, method (*SQLSpan) SetError(SQLErrorCode) #XXXXX
+pkg runtime/trace, method (*SQLSpan) End(int64) #XXXXX
+pkg runtime/trace, func SQLQuery(context.Context, TraceContext, string) *SQLSpan #XXXXX
+pkg runtime/trace, func SanitizeSQL(string) string #XXXXX
+pkg runtime/trace, func SetSQLSanitizer(func(string) string) #XXXXX
+pkg runtime/trace, type TLSVersion uint16 #XXXXX
+pkg runtime/trace, const TLSVersionUnknown TLSVersion #XXXXX
+pkg runtime/trace, const TLSVersion10 TLSVersion #XXXXX
+pkg runtime/trace, const TLSVersion11 TLSVersion #XXXXX
+pkg runtime/trace, const TLSVersion12 TLSVersion #XXXXX
+pkg runtime/trace, const TLSVersion13 TLSVersion #XXXXX
+pkg runtime/trace, method (TLSVersion) String() string #XXXXX
+pkg runtime/trace, type TLSSpan struct #XXXXX
+pkg runtime/trace, method (*TLSSpan) End(TLSVersion, uint16) #XXXXX
+pkg runtime/trace, func TLSHandshake(context.Context, TraceContext, string) *TLSSpan #XXXXX
+pkg runtime/trace, type NetErrorCode uint8 #XXXXX
+pkg runtime/trace, const NetErrorNone NetErrorCode #XXXXX
+pkg runtime/trace, const NetErrorTimeout NetErrorCode #XXXXX
+pkg runtime/trace, const NetErrorCanceled NetErrorCode #XXXXX
+pkg runtime/trace, const NetErrorRefused NetErrorCode #XXXXX
+pkg runtime/trace, const NetErrorReset NetErrorCode #XXXXX
+pkg runtime/trace, const NetErrorUnreach NetErrorCode #XXXXX
+pkg runtime/trace, const NetErrorNoHost NetErrorCode #XXXXX
+pkg runtime/trace, const NetErrorOther NetErrorCode #XXXXX
+pkg runtime/trace, method (NetErrorCode) String() string #XXXXX
+pkg runtime/trace, type DNSSpan struct #XXXXX
+pkg runtime/trace, method (*DNSSpan) SetError(NetErrorCode) #XXXXX
+pkg runtime/trace, method (*DNSSpan) End(int) #XXXXX
+pkg runtime/trace, func DNSLookup(context.Context, TraceContext, string) *DNSSpan #XXXXX
+pkg runtime/trace, type ConnectSpan struct #XXXXX
+pkg runtime/trace, method (*ConnectSpan) SetError(NetErrorCode) #XXXXX
+pkg runtime/trace, method (*ConnectSpan) End() #XXXXX
+pkg runtime/trace, func Connect(context.Context, TraceContext, string) *ConnectSpan #XXXXX

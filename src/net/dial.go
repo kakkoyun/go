@@ -10,6 +10,7 @@ import (
 	"internal/godebug"
 	"internal/nettrace"
 	"net/netip"
+	"runtime/trace"
 	"syscall"
 	"time"
 )
@@ -527,10 +528,20 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (Conn
 	ctx, cancel := d.dialCtx(ctx)
 	defer cancel()
 
+	// Extract host for DNS tracing
+	host, _, _ := SplitHostPort(address)
+	if host == "" {
+		host = address
+	}
+
+	// Start DNS trace span
+	tc, _ := trace.SpanFromContext(ctx)
+	dnsSpan := trace.DNSLookup(ctx, tc, host)
+
 	// Shadow the nettrace (if any) during resolve so Connect events don't fire for DNS lookups.
 	resolveCtx := ctx
-	if trace, _ := ctx.Value(nettrace.TraceKey{}).(*nettrace.Trace); trace != nil {
-		shadow := *trace
+	if nettrc, _ := ctx.Value(nettrace.TraceKey{}).(*nettrace.Trace); nettrc != nil {
+		shadow := *nettrc
 		shadow.ConnectStart = nil
 		shadow.ConnectDone = nil
 		resolveCtx = context.WithValue(resolveCtx, nettrace.TraceKey{}, &shadow)
@@ -538,8 +549,14 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (Conn
 
 	addrs, err := d.resolver().resolveAddrList(resolveCtx, "dial", network, address, d.LocalAddr)
 	if err != nil {
+		dnsSpan.SetError(classifyNetError(err))
+		dnsSpan.End(0)
 		return nil, &OpError{Op: "dial", Net: network, Source: nil, Addr: nil, Err: err}
 	}
+	dnsSpan.End(len(addrs))
+
+	// Start Connect trace span
+	connectSpan := trace.Connect(ctx, tc, address)
 
 	sd := &sysDialer{
 		Dialer:  *d,
@@ -554,7 +571,12 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (Conn
 		primaries = addrs
 	}
 
-	return sd.dialParallel(ctx, primaries, fallbacks)
+	conn, err := sd.dialParallel(ctx, primaries, fallbacks)
+	if err != nil {
+		connectSpan.SetError(classifyNetError(err))
+	}
+	connectSpan.End()
+	return conn, err
 }
 
 func (d *Dialer) dialCtx(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -996,4 +1018,42 @@ func Listen(network, address string) (Listener, error) {
 func ListenPacket(network, address string) (PacketConn, error) {
 	var lc ListenConfig
 	return lc.ListenPacket(context.Background(), network, address)
+}
+
+// classifyNetError maps common network errors to trace error codes.
+func classifyNetError(err error) trace.NetErrorCode {
+	if err == nil {
+		return trace.NetErrorNone
+	}
+	if err == context.DeadlineExceeded {
+		return trace.NetErrorTimeout
+	}
+	if err == context.Canceled {
+		return trace.NetErrorCanceled
+	}
+	// Check for DNS errors
+	if dnsErr, ok := err.(*DNSError); ok {
+		if dnsErr.IsNotFound {
+			return trace.NetErrorNoHost
+		}
+		if dnsErr.IsTimeout {
+			return trace.NetErrorTimeout
+		}
+	}
+	// Check for OpError wrapping syscall errors
+	if opErr, ok := err.(*OpError); ok {
+		if se, ok := opErr.Err.(*syscall.Errno); ok {
+			switch *se {
+			case syscall.ECONNREFUSED:
+				return trace.NetErrorRefused
+			case syscall.ECONNRESET:
+				return trace.NetErrorReset
+			case syscall.EHOSTUNREACH, syscall.ENETUNREACH:
+				return trace.NetErrorUnreach
+			}
+		}
+		// Check wrapped error
+		return classifyNetError(opErr.Err)
+	}
+	return trace.NetErrorOther
 }

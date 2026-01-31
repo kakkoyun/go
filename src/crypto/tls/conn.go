@@ -18,6 +18,7 @@ import (
 	"internal/godebug"
 	"io"
 	"net"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1524,6 +1525,14 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
 		return nil
 	}
 
+	// Start TLS trace span
+	serverName := ""
+	if c.config != nil {
+		serverName = c.config.ServerName
+	}
+	tc, _ := trace.SpanFromContext(ctx)
+	tlsSpan := trace.TLSHandshake(ctx, tc, serverName)
+
 	handshakeCtx, cancel := context.WithCancel(ctx)
 	// Note: defer this before calling context.AfterFunc
 	// so that we can tell the difference between the input being canceled and
@@ -1562,10 +1571,14 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
 	c.handshakeErr = c.handshakeFn(handshakeCtx)
 	if c.handshakeErr == nil {
 		c.handshakes++
+		// End TLS trace span with negotiated parameters
+		tlsSpan.End(trace.TLSVersion(c.vers), c.cipherSuite)
 	} else {
 		// If an error occurred during the handshake try to flush the
 		// alert that might be left in the buffer.
 		c.flush()
+		// End TLS trace span with failure
+		tlsSpan.End(0, 0)
 	}
 
 	if c.handshakeErr == nil && !c.isHandshakeComplete.Load() {

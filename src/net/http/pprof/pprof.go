@@ -74,6 +74,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"html"
 	"internal/godebug"
@@ -168,8 +169,37 @@ func Profile(w http.ResponseWriter, r *http.Request) {
 // Trace responds with the execution trace in binary form.
 // Tracing lasts for duration specified in seconds GET parameter, or for 1 second if not specified.
 // The package initialization registers it as /debug/pprof/trace.
+//
+// # Streaming Mode
+//
+// When stream=1 is specified, the endpoint streams trace data continuously using a
+// FlightRecorder. This is useful for external monitoring tools that want to scrape
+// trace data from a running application.
+//
+// Streaming parameters:
+//   - stream=1: Enable streaming mode
+//   - interval=N: Interval in seconds between snapshots (default 1.0)
+//   - maxbytes=N: FlightRecorder buffer size in bytes (default 10485760, i.e., 10MB)
+//   - minage=N: Minimum age of events to keep in seconds (default 10)
+//   - filter=F: Event filter - numeric value or comma-separated names (core,http,sql,tls,net,custom,all)
+//
+// In streaming mode, each snapshot is prefixed with an 8-byte little-endian length,
+// allowing clients to read: length (8 bytes) → trace data (length bytes) → repeat.
+//
+// Example streaming requests:
+//
+//	curl http://localhost:6060/debug/pprof/trace?stream=1&interval=5
+//	curl http://localhost:6060/debug/pprof/trace?stream=1&filter=http
+//	curl http://localhost:6060/debug/pprof/trace?stream=1&filter=http,sql&interval=2
 func Trace(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	// Check for streaming mode
+	if r.FormValue("stream") == "1" {
+		serveTraceStream(w, r)
+		return
+	}
+
 	sec, err := strconv.ParseFloat(r.FormValue("seconds"), 64)
 	if sec <= 0 || err != nil {
 		sec = 1
@@ -189,6 +219,151 @@ func Trace(w http.ResponseWriter, r *http.Request) {
 	}
 	sleep(r, time.Duration(sec*float64(time.Second)))
 	trace.Stop()
+}
+
+// serveTraceStream handles streaming trace data using a FlightRecorder.
+func serveTraceStream(w http.ResponseWriter, r *http.Request) {
+	// Parse streaming parameters
+	interval, err := strconv.ParseFloat(r.FormValue("interval"), 64)
+	if interval <= 0 || err != nil {
+		interval = 1.0
+	}
+
+	maxBytes, err := strconv.ParseUint(r.FormValue("maxbytes"), 10, 64)
+	if maxBytes == 0 || err != nil {
+		maxBytes = 10 << 20 // 10MB default
+	}
+
+	minAge, err := strconv.ParseInt(r.FormValue("minage"), 10, 64)
+	if minAge <= 0 || err != nil {
+		minAge = 10
+	}
+
+	// Parse event filter - supports numeric value or named categories
+	// Examples: filter=3 (Core|HTTP), filter=http, filter=http,sql
+	filterStr := r.FormValue("filter")
+	var filter trace.EventFilter
+	if filterStr != "" {
+		filter = parseEventFilter(filterStr)
+	}
+
+	// Disable write deadline for streaming - we stream until client disconnects
+	rc := http.NewResponseController(w)
+	rc.SetWriteDeadline(time.Time{}) // No deadline
+
+	// Set event filter if specified (save and restore original)
+	var originalFilter trace.EventFilter
+	if filter != 0 {
+		originalFilter = trace.GetEventFilter()
+		trace.SetEventFilter(filter)
+		defer trace.SetEventFilter(originalFilter)
+	}
+
+	// Create and start the FlightRecorder
+	fr := trace.NewFlightRecorder(trace.FlightRecorderConfig{
+		MaxBytes: maxBytes,
+		MinAge:   time.Duration(minAge) * time.Second,
+	})
+
+	if err := fr.Start(); err != nil {
+		serveError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Could not start flight recorder: %s", err))
+		return
+	}
+	defer fr.Stop()
+
+	// Set headers for streaming
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Transfer-Encoding", "chunked")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	// Flush headers immediately
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	ticker := time.NewTicker(time.Duration(interval * float64(time.Second)))
+	defer ticker.Stop()
+
+	ctx := r.Context()
+
+	// Stream snapshots until client disconnects
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := writeTraceSnapshot(w, fr); err != nil {
+				// Client likely disconnected
+				return
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}
+}
+
+// parseEventFilter parses an event filter specification.
+// Accepts either a numeric value or comma-separated category names.
+// Examples: "3", "http", "http,sql", "core,http,custom"
+func parseEventFilter(s string) trace.EventFilter {
+	// Try numeric value first
+	if v, err := strconv.ParseUint(s, 10, 32); err == nil {
+		return trace.EventFilter(v)
+	}
+
+	// Parse named categories
+	var filter trace.EventFilter
+	for _, name := range strings.Split(strings.ToLower(s), ",") {
+		switch strings.TrimSpace(name) {
+		case "core":
+			filter |= trace.FilterCore
+		case "http":
+			filter |= trace.FilterHTTP
+		case "sql":
+			filter |= trace.FilterSQL
+		case "tls":
+			filter |= trace.FilterTLS
+		case "net":
+			filter |= trace.FilterNet
+		case "custom":
+			filter |= trace.FilterCustom
+		case "all":
+			filter |= trace.FilterAll
+		}
+	}
+
+	// Always include core events
+	if filter != 0 {
+		filter |= trace.FilterCore
+	}
+
+	return filter
+}
+
+// writeTraceSnapshot writes a single trace snapshot with length prefix.
+func writeTraceSnapshot(w io.Writer, fr *trace.FlightRecorder) error {
+	// Capture snapshot to buffer first to get the length
+	var buf bytes.Buffer
+	_, err := fr.WriteTo(&buf)
+	if err != nil {
+		return err
+	}
+
+	// Write 8-byte little-endian length prefix
+	var lenBuf [8]byte
+	binary.LittleEndian.PutUint64(lenBuf[:], uint64(buf.Len()))
+	if _, err := w.Write(lenBuf[:]); err != nil {
+		return err
+	}
+
+	// Write the snapshot data
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Symbol looks up the program counters listed in the request,
@@ -371,7 +546,7 @@ var profileDescriptions = map[string]string{
 	"profile":      "CPU profile. You can specify the duration in the seconds GET parameter. After you get the profile file, use the go tool pprof command to investigate the profile.",
 	"symbol":       "Maps given program counters to function names. Counters can be specified in a GET raw query or POST body, multiple counters are separated by '+'.",
 	"threadcreate": "Stack traces that led to the creation of new OS threads",
-	"trace":        "A trace of execution of the current program. You can specify the duration in the seconds GET parameter. After you get the trace file, use the go tool trace command to investigate the trace.",
+	"trace":        "A trace of execution of the current program. You can specify the duration in the seconds GET parameter, or use stream=1 for continuous streaming. After you get the trace file, use the go tool trace command to investigate the trace.",
 }
 
 func init() {

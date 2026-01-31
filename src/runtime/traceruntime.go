@@ -676,6 +676,237 @@ func trace_userLog(id uint64, category, message string) {
 	traceRelease(tl)
 }
 
+// trace_httpServerRequestStart emits an HTTPServerRequestStart event.
+//
+//go:linkname trace_httpServerRequestStart runtime/trace.httpServerRequestStart
+func trace_httpServerRequestStart(traceID, spanID uint64, path string) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvHTTPServerRequestStart,
+		traceArg(traceID),
+		traceArg(spanID),
+		tl.uniqueString(path),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
+// trace_httpServerRequestEnd emits an HTTPServerRequestEnd event.
+//
+//go:linkname trace_httpServerRequestEnd runtime/trace.httpServerRequestEnd
+func trace_httpServerRequestEnd(spanID uint64, statusCode int) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvHTTPServerRequestEnd,
+		traceArg(spanID),
+		traceArg(uint64(statusCode)),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
+// trace_httpClientRequestStart emits an HTTPClientRequestStart event.
+//
+//go:linkname trace_httpClientRequestStart runtime/trace.httpClientRequestStart
+func trace_httpClientRequestStart(traceID, spanID uint64, url string) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvHTTPClientRequestStart,
+		traceArg(traceID),
+		traceArg(spanID),
+		tl.uniqueString(url),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
+// trace_httpClientRequestEnd emits an HTTPClientRequestEnd event.
+//
+//go:linkname trace_httpClientRequestEnd runtime/trace.httpClientRequestEnd
+func trace_httpClientRequestEnd(spanID uint64, statusCode int, errorKind uint8) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvHTTPClientRequestEnd,
+		traceArg(spanID),
+		traceArg(uint64(statusCode)),
+		traceArg(uint64(errorKind)),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
+// trace_httpClientError emits an HTTPClientError event.
+//
+//go:linkname trace_httpClientError runtime/trace.httpClientError
+func trace_httpClientError(spanID uint64, errorKind uint8, errMsg string) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvHTTPClientError,
+		traceArg(spanID),
+		traceArg(uint64(errorKind)),
+		tl.uniqueString(errMsg),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
+// trace_sqlQueryStart emits a SQLQueryStart event.
+//
+//go:linkname trace_sqlQueryStart runtime/trace.sqlQueryStart
+func trace_sqlQueryStart(traceID, spanID uint64, query string) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvSQLQueryStart,
+		traceArg(traceID),
+		traceArg(spanID),
+		tl.uniqueString(query),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
+// trace_sqlQueryEnd emits a SQLQueryEnd event.
+//
+//go:linkname trace_sqlQueryEnd runtime/trace.sqlQueryEnd
+func trace_sqlQueryEnd(spanID uint64, rowsAffected int64, errorCode uint8) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvSQLQueryEnd,
+		traceArg(spanID),
+		traceArg(uint64(rowsAffected)),
+		traceArg(uint64(errorCode)),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
+// trace_tlsHandshakeStart emits a TLSHandshakeStart event.
+//
+//go:linkname trace_tlsHandshakeStart runtime/trace.tlsHandshakeStart
+func trace_tlsHandshakeStart(traceID, spanID uint64, serverName string) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvTLSHandshakeStart,
+		traceArg(traceID),
+		traceArg(spanID),
+		tl.uniqueString(serverName),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
+// trace_tlsHandshakeEnd emits a TLSHandshakeEnd event.
+//
+//go:linkname trace_tlsHandshakeEnd runtime/trace.tlsHandshakeEnd
+func trace_tlsHandshakeEnd(spanID uint64, version, cipherSuite uint16) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvTLSHandshakeEnd,
+		traceArg(spanID),
+		traceArg(uint64(version)),
+		traceArg(uint64(cipherSuite)),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
+// trace_dnsLookupStart emits a DNSLookupStart event.
+//
+//go:linkname trace_dnsLookupStart runtime/trace.dnsLookupStart
+func trace_dnsLookupStart(traceID, spanID uint64, host string) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvDNSLookupStart,
+		traceArg(traceID),
+		traceArg(spanID),
+		tl.uniqueString(host),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
+// trace_dnsLookupEnd emits a DNSLookupEnd event.
+//
+//go:linkname trace_dnsLookupEnd runtime/trace.dnsLookupEnd
+func trace_dnsLookupEnd(spanID uint64, addrCount int) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvDNSLookupEnd,
+		traceArg(spanID),
+		traceArg(uint64(addrCount)),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
+// trace_connectStart emits a ConnectStart event.
+//
+//go:linkname trace_connectStart runtime/trace.connectStart
+func trace_connectStart(traceID, spanID uint64, addr string) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvConnectStart,
+		traceArg(traceID),
+		traceArg(spanID),
+		tl.uniqueString(addr),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
+// trace_connectEnd emits a ConnectEnd event.
+//
+//go:linkname trace_connectEnd runtime/trace.connectEnd
+func trace_connectEnd(spanID uint64, errorCode uint8) {
+	tl := traceAcquire()
+	if !tl.ok() {
+		return
+	}
+	tl.eventWriter(tracev2.GoRunning, tracev2.ProcRunning).event(
+		tracev2.EvConnectEnd,
+		traceArg(spanID),
+		traceArg(uint64(errorCode)),
+		tl.stack(3),
+	)
+	traceRelease(tl)
+}
+
 // traceThreadDestroy is called when a thread is removed from
 // sched.freem.
 //

@@ -279,6 +279,21 @@ var trace struct {
 	// It follows the same synchronization protocol as enabled.
 	enabledWithAllocFree bool
 
+	// enabledCategories is a bitmask indicating which event categories are enabled.
+	// Events in disabled categories are silently dropped at emission time.
+	// The default value is CategoryDefault (CategoryCore | CategoryCustom).
+	// This follows the same synchronization protocol as enabled.
+	//
+	// The bitmask values correspond to tracev2.EventCategory:
+	//   1 = Core (always enabled), 2 = HTTP, 4 = SQL, 8 = TLS, 16 = Net, 32 = Custom
+	enabledCategories atomic.Uint32
+
+	// sampleRate controls what percentage of span events (HTTP, SQL, etc.) are traced.
+	// Stored as uint32 where 0 = 0% and 0xFFFFFFFF = 100%.
+	// Default is 0xFFFFFFFF (100% - trace all requests).
+	// Core runtime events are not affected by sampling.
+	sampleRate atomic.Uint32
+
 	// Trace generation counter.
 	gen            atomic.Uintptr
 	lastNonZeroGen uintptr // last non-zero value of gen
@@ -309,6 +324,56 @@ var (
 	traceAdvanceSema  uint32 = 1
 	traceShutdownSema uint32 = 1
 )
+
+// traceSetEventFilter sets the enabled event categories bitmask.
+// This is called from runtime/trace.SetEventFilter via linkname.
+//
+//go:linkname traceSetEventFilter
+func traceSetEventFilter(filter uint32) {
+	trace.enabledCategories.Store(filter)
+}
+
+// traceGetEventFilter returns the enabled event categories bitmask.
+// This is called from runtime/trace.GetEventFilter via linkname.
+//
+//go:linkname traceGetEventFilter
+func traceGetEventFilter() uint32 {
+	return trace.enabledCategories.Load()
+}
+
+// traceSetSampleRate sets the sampling rate for span events.
+// This is called from runtime/trace.SetSampleRate via linkname.
+//
+//go:linkname traceSetSampleRate
+func traceSetSampleRate(rate uint32) {
+	trace.sampleRate.Store(rate)
+}
+
+// traceGetSampleRate returns the current sampling rate.
+// This is called from runtime/trace.GetSampleRate via linkname.
+//
+//go:linkname traceGetSampleRate
+func traceGetSampleRate() uint32 {
+	return trace.sampleRate.Load()
+}
+
+// traceShouldSample returns true if the current span should be sampled.
+// Uses a fast random number generator based on the M's random state.
+// This is designed to be called from span-start functions.
+//
+//go:linkname traceShouldSample
+//go:nosplit
+func traceShouldSample() bool {
+	rate := trace.sampleRate.Load()
+	if rate == 0xFFFFFFFF {
+		return true // 100% sampling, always trace
+	}
+	if rate == 0 {
+		return false // 0% sampling, never trace
+	}
+	// Use cheap_rand for fast random number generation
+	return cheaprand() < rate
+}
 
 // StartTrace enables tracing for the current process.
 // While tracing, the data will be buffered and available via [ReadTrace].
@@ -401,6 +466,35 @@ func StartTrace() error {
 		trace.enabledWithAllocFree = true
 		debug.malloc = true
 	}
+
+	// Initialize enabled categories.
+	// If SetEventFilter was called before StartTrace, use that value as base.
+	// Otherwise, use CategoryDefault (Core | Custom).
+	// GODEBUG variables (tracehttp, tracesql, etc.) add additional categories.
+	categories := trace.enabledCategories.Load()
+	if categories == 0 {
+		categories = uint32(tracev2.CategoryDefault)
+	}
+	if debug.tracehttp.Load() != 0 {
+		categories |= uint32(tracev2.CategoryHTTP)
+	}
+	if debug.tracesql.Load() != 0 {
+		categories |= uint32(tracev2.CategorySQL)
+	}
+	if debug.tracetls.Load() != 0 {
+		categories |= uint32(tracev2.CategoryTLS)
+	}
+	if debug.tracenet.Load() != 0 {
+		categories |= uint32(tracev2.CategoryNet)
+	}
+	trace.enabledCategories.Store(categories)
+
+	// Initialize sample rate if not already set.
+	// Default is 100% (0xFFFFFFFF) - trace all requests.
+	if trace.sampleRate.Load() == 0 {
+		trace.sampleRate.Store(0xFFFFFFFF)
+	}
+
 	trace.gen.Store(firstGen)
 
 	// Wait for exitingSyscall to drain.

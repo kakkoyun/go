@@ -83,6 +83,27 @@ const (
 	// Batch event for an experimental batch with a custom format. Added in Go 1.23.
 	EvExperimentalBatch // start of extra data [experiment ID, generation, M ID, timestamp, batch length, batch data...]
 
+	// HTTP tracing events. Added in Go 1.26.
+	EvHTTPServerRequestStart // HTTP server request started [timestamp, trace_id, span_id, path, stack]
+	EvHTTPServerRequestEnd   // HTTP server request ended [timestamp, span_id, status_code, stack]
+	EvHTTPClientRequestStart // HTTP client request started [timestamp, trace_id, span_id, url, stack]
+	EvHTTPClientRequestEnd   // HTTP client request ended [timestamp, span_id, status_code, error_kind, stack]
+	EvHTTPClientError        // HTTP client error [timestamp, span_id, error_kind, error_msg, stack]
+
+	// SQL tracing events. Added in Go 1.26.
+	EvSQLQueryStart // SQL query started [timestamp, trace_id, span_id, query, stack]
+	EvSQLQueryEnd   // SQL query ended [timestamp, span_id, rows_affected, error_code, stack]
+
+	// TLS tracing events. Added in Go 1.26.
+	EvTLSHandshakeStart // TLS handshake started [timestamp, trace_id, span_id, server_name, stack]
+	EvTLSHandshakeEnd   // TLS handshake ended [timestamp, span_id, version, cipher_suite, stack]
+
+	// Network tracing events. Added in Go 1.26.
+	EvDNSLookupStart // DNS lookup started [timestamp, trace_id, span_id, host, stack]
+	EvDNSLookupEnd   // DNS lookup ended [timestamp, span_id, addr_count, stack]
+	EvConnectStart   // TCP connect started [timestamp, trace_id, span_id, addr, stack]
+	EvConnectEnd     // TCP connect ended [timestamp, span_id, error_code, stack]
+
 	// Sync batch. Added in Go 1.25. Previously a lone EvFrequency event.
 	EvSync          // start of a sync batch [...EvFrequency|EvClockSnapshot]
 	EvClockSnapshot // snapshot of trace, mono and wall clocks [timestamp, mono, sec, nsec]
@@ -150,6 +171,7 @@ func Specs() []EventSpec {
 
 var specs = [...]EventSpec{
 	// "Structural" Events.
+	// Structural events have no Category (zero value) - they are always emitted.
 	EvEventBatch: {
 		Name: "EventBatch",
 		Args: []string{"gen", "m", "time", "size"},
@@ -198,57 +220,68 @@ var specs = [...]EventSpec{
 	},
 
 	// "Timed" Events.
+	// Core runtime events - always enabled when tracing is active.
 	EvProcsChange: {
 		Name:         "ProcsChange",
 		Args:         []string{"dt", "procs_value", "stack"},
 		IsTimedEvent: true,
 		StackIDs:     []int{2},
+		Category:     CategoryCore,
 	},
 	EvProcStart: {
 		Name:         "ProcStart",
 		Args:         []string{"dt", "p", "p_seq"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvProcStop: {
 		Name:         "ProcStop",
 		Args:         []string{"dt"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvProcSteal: {
 		Name:         "ProcSteal",
 		Args:         []string{"dt", "p", "p_seq", "m"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvProcStatus: {
 		Name:         "ProcStatus",
 		Args:         []string{"dt", "p", "pstatus"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGoCreate: {
 		Name:         "GoCreate",
 		Args:         []string{"dt", "new_g", "new_stack", "stack"},
 		IsTimedEvent: true,
 		StackIDs:     []int{3, 2},
+		Category:     CategoryCore,
 	},
 	EvGoCreateSyscall: {
 		Name:         "GoCreateSyscall",
 		Args:         []string{"dt", "new_g"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGoStart: {
 		Name:         "GoStart",
 		Args:         []string{"dt", "g", "g_seq"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGoDestroy: {
 		Name:         "GoDestroy",
 		Args:         []string{"dt"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGoDestroySyscall: {
 		Name:         "GoDestroySyscall",
 		Args:         []string{"dt"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGoStop: {
 		Name:         "GoStop",
@@ -256,6 +289,7 @@ var specs = [...]EventSpec{
 		IsTimedEvent: true,
 		StackIDs:     []int{2},
 		StringIDs:    []int{1},
+		Category:     CategoryCore,
 	},
 	EvGoBlock: {
 		Name:         "GoBlock",
@@ -263,35 +297,41 @@ var specs = [...]EventSpec{
 		IsTimedEvent: true,
 		StackIDs:     []int{2},
 		StringIDs:    []int{1},
+		Category:     CategoryCore,
 	},
 	EvGoUnblock: {
 		Name:         "GoUnblock",
 		Args:         []string{"dt", "g", "g_seq", "stack"},
 		IsTimedEvent: true,
 		StackIDs:     []int{3},
+		Category:     CategoryCore,
 	},
 	EvGoSyscallBegin: {
 		Name:         "GoSyscallBegin",
 		Args:         []string{"dt", "p_seq", "stack"},
 		IsTimedEvent: true,
 		StackIDs:     []int{2},
+		Category:     CategoryCore,
 	},
 	EvGoSyscallEnd: {
 		Name:         "GoSyscallEnd",
 		Args:         []string{"dt"},
 		StartEv:      EvGoSyscallBegin,
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGoSyscallEndBlocked: {
 		Name:         "GoSyscallEndBlocked",
 		Args:         []string{"dt"},
 		StartEv:      EvGoSyscallBegin,
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGoStatus: {
 		Name:         "GoStatus",
 		Args:         []string{"dt", "g", "m", "gstatus"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvSTWBegin: {
 		Name:         "STWBegin",
@@ -299,82 +339,97 @@ var specs = [...]EventSpec{
 		IsTimedEvent: true,
 		StackIDs:     []int{2},
 		StringIDs:    []int{1},
+		Category:     CategoryCore,
 	},
 	EvSTWEnd: {
 		Name:         "STWEnd",
 		Args:         []string{"dt"},
 		StartEv:      EvSTWBegin,
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGCActive: {
 		Name:         "GCActive",
 		Args:         []string{"dt", "gc_seq"},
 		IsTimedEvent: true,
 		StartEv:      EvGCBegin,
+		Category:     CategoryCore,
 	},
 	EvGCBegin: {
 		Name:         "GCBegin",
 		Args:         []string{"dt", "gc_seq", "stack"},
 		IsTimedEvent: true,
 		StackIDs:     []int{2},
+		Category:     CategoryCore,
 	},
 	EvGCEnd: {
 		Name:         "GCEnd",
 		Args:         []string{"dt", "gc_seq"},
 		StartEv:      EvGCBegin,
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGCSweepActive: {
 		Name:         "GCSweepActive",
 		Args:         []string{"dt", "p"},
 		StartEv:      EvGCSweepBegin,
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGCSweepBegin: {
 		Name:         "GCSweepBegin",
 		Args:         []string{"dt", "stack"},
 		IsTimedEvent: true,
 		StackIDs:     []int{1},
+		Category:     CategoryCore,
 	},
 	EvGCSweepEnd: {
 		Name:         "GCSweepEnd",
 		Args:         []string{"dt", "swept_value", "reclaimed_value"},
 		StartEv:      EvGCSweepBegin,
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGCMarkAssistActive: {
 		Name:         "GCMarkAssistActive",
 		Args:         []string{"dt", "g"},
 		StartEv:      EvGCMarkAssistBegin,
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGCMarkAssistBegin: {
 		Name:         "GCMarkAssistBegin",
 		Args:         []string{"dt", "stack"},
 		IsTimedEvent: true,
 		StackIDs:     []int{1},
+		Category:     CategoryCore,
 	},
 	EvGCMarkAssistEnd: {
 		Name:         "GCMarkAssistEnd",
 		Args:         []string{"dt"},
 		StartEv:      EvGCMarkAssistBegin,
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvHeapAlloc: {
 		Name:         "HeapAlloc",
 		Args:         []string{"dt", "heapalloc_value"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvHeapGoal: {
 		Name:         "HeapGoal",
 		Args:         []string{"dt", "heapgoal_value"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
+	// User annotation events - enabled by default with core events.
 	EvGoLabel: {
 		Name:         "GoLabel",
 		Args:         []string{"dt", "label_string"},
 		IsTimedEvent: true,
 		StringIDs:    []int{1},
+		Category:     CategoryCustom,
 	},
 	EvUserTaskBegin: {
 		Name:         "UserTaskBegin",
@@ -382,12 +437,14 @@ var specs = [...]EventSpec{
 		IsTimedEvent: true,
 		StackIDs:     []int{4},
 		StringIDs:    []int{3},
+		Category:     CategoryCustom,
 	},
 	EvUserTaskEnd: {
 		Name:         "UserTaskEnd",
 		Args:         []string{"dt", "task", "stack"},
 		IsTimedEvent: true,
 		StackIDs:     []int{2},
+		Category:     CategoryCustom,
 	},
 	EvUserRegionBegin: {
 		Name:         "UserRegionBegin",
@@ -395,6 +452,7 @@ var specs = [...]EventSpec{
 		IsTimedEvent: true,
 		StackIDs:     []int{3},
 		StringIDs:    []int{2},
+		Category:     CategoryCustom,
 	},
 	EvUserRegionEnd: {
 		Name:         "UserRegionEnd",
@@ -403,6 +461,7 @@ var specs = [...]EventSpec{
 		IsTimedEvent: true,
 		StackIDs:     []int{3},
 		StringIDs:    []int{2},
+		Category:     CategoryCustom,
 	},
 	EvUserLog: {
 		Name:         "UserLog",
@@ -410,33 +469,148 @@ var specs = [...]EventSpec{
 		IsTimedEvent: true,
 		StackIDs:     []int{4},
 		StringIDs:    []int{2, 3},
+		Category:     CategoryCustom,
 	},
+	// Coroutine events - core runtime events.
 	EvGoSwitch: {
 		Name:         "GoSwitch",
 		Args:         []string{"dt", "g", "g_seq"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGoSwitchDestroy: {
 		Name:         "GoSwitchDestroy",
 		Args:         []string{"dt", "g", "g_seq"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
 	},
 	EvGoCreateBlocked: {
 		Name:         "GoCreateBlocked",
 		Args:         []string{"dt", "new_g", "new_stack", "stack"},
 		IsTimedEvent: true,
 		StackIDs:     []int{3, 2},
+		Category:     CategoryCore,
 	},
 	EvGoStatusStack: {
 		Name:         "GoStatusStack",
 		Args:         []string{"dt", "g", "m", "gstatus", "stack"},
 		IsTimedEvent: true,
 		StackIDs:     []int{4},
+		Category:     CategoryCore,
 	},
 	EvClockSnapshot: {
 		Name:         "ClockSnapshot",
 		Args:         []string{"dt", "mono", "sec", "nsec"},
 		IsTimedEvent: true,
+		Category:     CategoryCore,
+	},
+	// HTTP tracing events - must be explicitly enabled.
+	EvHTTPServerRequestStart: {
+		Name:         "HTTPServerRequestStart",
+		Args:         []string{"dt", "trace_id", "span_id", "path_string", "stack"},
+		IsTimedEvent: true,
+		StackIDs:     []int{4},
+		StringIDs:    []int{3},
+		Category:     CategoryHTTP,
+	},
+	EvHTTPServerRequestEnd: {
+		Name:         "HTTPServerRequestEnd",
+		Args:         []string{"dt", "span_id", "status_code", "stack"},
+		StartEv:      EvHTTPServerRequestStart,
+		IsTimedEvent: true,
+		StackIDs:     []int{3},
+		Category:     CategoryHTTP,
+	},
+	EvHTTPClientRequestStart: {
+		Name:         "HTTPClientRequestStart",
+		Args:         []string{"dt", "trace_id", "span_id", "url_string", "stack"},
+		IsTimedEvent: true,
+		StackIDs:     []int{4},
+		StringIDs:    []int{3},
+		Category:     CategoryHTTP,
+	},
+	EvHTTPClientRequestEnd: {
+		Name:         "HTTPClientRequestEnd",
+		Args:         []string{"dt", "span_id", "status_code", "error_kind", "stack"},
+		StartEv:      EvHTTPClientRequestStart,
+		IsTimedEvent: true,
+		StackIDs:     []int{4},
+		Category:     CategoryHTTP,
+	},
+	EvHTTPClientError: {
+		Name:         "HTTPClientError",
+		Args:         []string{"dt", "span_id", "error_kind", "error_string", "stack"},
+		IsTimedEvent: true,
+		StackIDs:     []int{4},
+		StringIDs:    []int{3},
+		Category:     CategoryHTTP,
+	},
+	// SQL tracing events - must be explicitly enabled.
+	EvSQLQueryStart: {
+		Name:         "SQLQueryStart",
+		Args:         []string{"dt", "trace_id", "span_id", "query_string", "stack"},
+		IsTimedEvent: true,
+		StackIDs:     []int{4},
+		StringIDs:    []int{3},
+		Category:     CategorySQL,
+	},
+	EvSQLQueryEnd: {
+		Name:         "SQLQueryEnd",
+		Args:         []string{"dt", "span_id", "rows_affected", "error_code", "stack"},
+		StartEv:      EvSQLQueryStart,
+		IsTimedEvent: true,
+		StackIDs:     []int{4},
+		Category:     CategorySQL,
+	},
+	// TLS tracing events - must be explicitly enabled.
+	EvTLSHandshakeStart: {
+		Name:         "TLSHandshakeStart",
+		Args:         []string{"dt", "trace_id", "span_id", "server_name_string", "stack"},
+		IsTimedEvent: true,
+		StackIDs:     []int{4},
+		StringIDs:    []int{3},
+		Category:     CategoryTLS,
+	},
+	EvTLSHandshakeEnd: {
+		Name:         "TLSHandshakeEnd",
+		Args:         []string{"dt", "span_id", "tls_version", "cipher_suite", "stack"},
+		StartEv:      EvTLSHandshakeStart,
+		IsTimedEvent: true,
+		StackIDs:     []int{4},
+		Category:     CategoryTLS,
+	},
+	// Network tracing events - must be explicitly enabled.
+	EvDNSLookupStart: {
+		Name:         "DNSLookupStart",
+		Args:         []string{"dt", "trace_id", "span_id", "host_string", "stack"},
+		IsTimedEvent: true,
+		StackIDs:     []int{4},
+		StringIDs:    []int{3},
+		Category:     CategoryNet,
+	},
+	EvDNSLookupEnd: {
+		Name:         "DNSLookupEnd",
+		Args:         []string{"dt", "span_id", "addr_count", "stack"},
+		StartEv:      EvDNSLookupStart,
+		IsTimedEvent: true,
+		StackIDs:     []int{3},
+		Category:     CategoryNet,
+	},
+	EvConnectStart: {
+		Name:         "ConnectStart",
+		Args:         []string{"dt", "trace_id", "span_id", "addr_string", "stack"},
+		IsTimedEvent: true,
+		StackIDs:     []int{4},
+		StringIDs:    []int{3},
+		Category:     CategoryNet,
+	},
+	EvConnectEnd: {
+		Name:         "ConnectEnd",
+		Args:         []string{"dt", "span_id", "error_code", "stack"},
+		StartEv:      EvConnectStart,
+		IsTimedEvent: true,
+		StackIDs:     []int{3},
+		Category:     CategoryNet,
 	},
 
 	// Experimental events.

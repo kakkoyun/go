@@ -28,6 +28,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"reflect"
+	rttrace "runtime/trace"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +38,56 @@ import (
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http/httpproxy"
 )
+
+// classifyHTTPError categorizes an HTTP error for tracing purposes.
+func classifyHTTPError(err error) rttrace.HTTPErrorKind {
+	if err == nil {
+		return rttrace.HTTPErrorNone
+	}
+
+	// Check for context cancellation/timeout
+	if errors.Is(err, context.Canceled) {
+		return rttrace.HTTPErrorCanceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return rttrace.HTTPErrorTimeout
+	}
+
+	// Check for network errors
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return rttrace.HTTPErrorTimeout
+		}
+	}
+
+	// Check for DNS errors
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return rttrace.HTTPErrorDNS
+	}
+
+	// Check for TLS errors
+	errStr := err.Error()
+	if strings.Contains(errStr, "tls:") || strings.Contains(errStr, "certificate") {
+		return rttrace.HTTPErrorTLS
+	}
+
+	// Check for connection errors
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if opErr.Op == "dial" {
+			return rttrace.HTTPErrorConnect
+		}
+	}
+	if strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "no route to host") {
+		return rttrace.HTTPErrorConnect
+	}
+
+	return rttrace.HTTPErrorOther
+}
 
 // DefaultTransport is the default implementation of [Transport] and is
 // used by [DefaultClient]. It establishes network connections as needed
@@ -587,7 +638,7 @@ func validateHeaders(hdrs Header) string {
 }
 
 // roundTrip implements a RoundTripper over HTTP.
-func (t *Transport) roundTrip(req *Request) (_ *Response, err error) {
+func (t *Transport) roundTrip(req *Request) (resp *Response, err error) {
 	t.nextProtoOnce.Do(t.onceSetNextProtoDefaults)
 	ctx := req.Context()
 	trace := httptrace.ContextClientTrace(ctx)
@@ -618,6 +669,30 @@ func (t *Transport) roundTrip(req *Request) (_ *Response, err error) {
 
 	origReq := req
 	req = setupRewindBody(req)
+
+	// Trace HTTP client request
+	var rtSpan *rttrace.HTTPSpan
+	if rttrace.IsEnabled() {
+		tc := rttrace.NewTraceContext()
+		rtSpan = rttrace.HTTPClientRequest(req.Context(), tc, req.URL.String())
+		// Inject trace context into request headers
+		req.Header.Set("Traceparent", tc.FormatTraceContext())
+		if tc.State != "" {
+			req.Header.Set("Tracestate", tc.State)
+		}
+	}
+	defer func() {
+		if rtSpan != nil {
+			statusCode := 0
+			if err == nil && resp != nil {
+				statusCode = resp.StatusCode
+			} else if err != nil {
+				// Classify the error
+				rtSpan.SetError(classifyHTTPError(err))
+			}
+			rtSpan.End(statusCode)
+		}
+	}()
 
 	if altRT := t.alternateRoundTripper(req); altRT != nil {
 		if resp, err := altRT.RoundTrip(req); err != ErrSkipAltProtocol {

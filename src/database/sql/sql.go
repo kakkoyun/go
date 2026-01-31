@@ -25,6 +25,7 @@ import (
 	"math/rand/v2"
 	"reflect"
 	"runtime"
+	"runtime/trace"
 	"slices"
 	"strconv"
 	"sync"
@@ -1686,11 +1687,25 @@ func (db *DB) Exec(query string, args ...any) (Result, error) {
 }
 
 func (db *DB) exec(ctx context.Context, query string, args []any, strategy connReuseStrategy) (Result, error) {
+	// Start SQL trace span
+	tc, _ := trace.SpanFromContext(ctx)
+	span := trace.SQLQuery(ctx, tc, query)
+
 	dc, err := db.conn(ctx, strategy)
 	if err != nil {
+		span.SetError(classifySQLError(err))
+		span.End(-1)
 		return nil, err
 	}
-	return db.execDC(ctx, dc, dc.releaseConn, query, args)
+	res, err := db.execDC(ctx, dc, dc.releaseConn, query, args)
+	if err != nil {
+		span.SetError(classifySQLError(err))
+		span.End(-1)
+		return nil, err
+	}
+	rowsAffected, _ := res.RowsAffected()
+	span.End(rowsAffected)
+	return res, nil
 }
 
 func (db *DB) execDC(ctx context.Context, dc *driverConn, release func(error), query string, args []any) (res Result, err error) {
@@ -1756,12 +1771,27 @@ func (db *DB) Query(query string, args ...any) (*Rows, error) {
 }
 
 func (db *DB) query(ctx context.Context, query string, args []any, strategy connReuseStrategy) (*Rows, error) {
+	// Start SQL trace span
+	tc, _ := trace.SpanFromContext(ctx)
+	span := trace.SQLQuery(ctx, tc, query)
+
 	dc, err := db.conn(ctx, strategy)
 	if err != nil {
+		span.SetError(classifySQLError(err))
+		span.End(-1)
 		return nil, err
 	}
 
-	return db.queryDC(ctx, nil, dc, dc.releaseConn, query, args)
+	rows, err := db.queryDC(ctx, nil, dc, dc.releaseConn, query, args)
+	if err != nil {
+		span.SetError(classifySQLError(err))
+		span.End(-1)
+		return nil, err
+	}
+	// For queries, we don't know rows affected until iteration completes
+	// End with -1 to indicate unknown count
+	span.End(-1)
+	return rows, nil
 }
 
 // queryDC executes a query on the given connection.
@@ -2509,11 +2539,25 @@ func (tx *Tx) Stmt(stmt *Stmt) *Stmt {
 // ExecContext executes a query that doesn't return rows.
 // For example: an INSERT and UPDATE.
 func (tx *Tx) ExecContext(ctx context.Context, query string, args ...any) (Result, error) {
+	// Start SQL trace span
+	tc, _ := trace.SpanFromContext(ctx)
+	span := trace.SQLQuery(ctx, tc, query)
+
 	dc, release, err := tx.grabConn(ctx)
 	if err != nil {
+		span.SetError(classifySQLError(err))
+		span.End(-1)
 		return nil, err
 	}
-	return tx.db.execDC(ctx, dc, release, query, args)
+	res, err := tx.db.execDC(ctx, dc, release, query, args)
+	if err != nil {
+		span.SetError(classifySQLError(err))
+		span.End(-1)
+		return nil, err
+	}
+	rowsAffected, _ := res.RowsAffected()
+	span.End(rowsAffected)
+	return res, nil
 }
 
 // Exec executes a query that doesn't return rows.
@@ -2527,12 +2571,26 @@ func (tx *Tx) Exec(query string, args ...any) (Result, error) {
 
 // QueryContext executes a query that returns rows, typically a SELECT.
 func (tx *Tx) QueryContext(ctx context.Context, query string, args ...any) (*Rows, error) {
+	// Start SQL trace span
+	tc, _ := trace.SpanFromContext(ctx)
+	span := trace.SQLQuery(ctx, tc, query)
+
 	dc, release, err := tx.grabConn(ctx)
 	if err != nil {
+		span.SetError(classifySQLError(err))
+		span.End(-1)
 		return nil, err
 	}
 
-	return tx.db.queryDC(ctx, tx.ctx, dc, release, query, args)
+	rows, err := tx.db.queryDC(ctx, tx.ctx, dc, release, query, args)
+	if err != nil {
+		span.SetError(classifySQLError(err))
+		span.End(-1)
+		return nil, err
+	}
+	// For queries, we don't know rows affected until iteration completes
+	span.End(-1)
+	return rows, nil
 }
 
 // Query executes a query that returns rows, typically a SELECT.
@@ -3672,4 +3730,21 @@ func (s *connRequestSet) TakeRandom() (v chan connRequest, ok bool) {
 	e := s.s[pick]
 	s.deleteIndex(pick)
 	return e.req, true
+}
+
+// classifySQLError maps common SQL errors to trace error codes.
+func classifySQLError(err error) trace.SQLErrorCode {
+	if err == nil {
+		return trace.SQLErrorNone
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return trace.SQLErrorTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		return trace.SQLErrorCanceled
+	}
+	if errors.Is(err, driver.ErrBadConn) {
+		return trace.SQLErrorConnection
+	}
+	return trace.SQLErrorOther
 }

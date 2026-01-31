@@ -24,6 +24,7 @@ import (
 	urlpkg "net/url"
 	"path"
 	"runtime"
+	"runtime/trace"
 	"slices"
 	"strconv"
 	"strings"
@@ -2069,9 +2070,28 @@ func (c *conn) serve(ctx context.Context) {
 		// in parallel even if their responses need to be serialized.
 		// But we're not going to implement HTTP pipelining because it
 		// was never deployed in the wild and the answer is HTTP/2.
+
+		// Trace HTTP request start
+		var httpSpan *trace.HTTPSpan
+		if trace.IsEnabled() {
+			tc, _ := trace.ParseTraceContext(w.req.Header.Get("Traceparent"))
+			tc.State = w.req.Header.Get("Tracestate")
+			httpSpan = trace.HTTPServerRequest(w.req.Context(), tc, w.req.URL.Path)
+		}
+
 		inFlightResponse = w
 		serverHandler{c.server}.ServeHTTP(w, w.req)
 		inFlightResponse = nil
+
+		// Trace HTTP request end
+		if httpSpan != nil {
+			statusCode := w.status
+			if statusCode == 0 {
+				statusCode = StatusOK
+			}
+			httpSpan.End(statusCode)
+		}
+
 		w.cancelCtx()
 		if c.hijacked() {
 			c.r.releaseConn()

@@ -6,7 +6,9 @@ package pprof
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"internal/profile"
 	"internal/testenv"
@@ -322,5 +324,222 @@ func TestDeltaProfileEmptyBase(t *testing.T) {
 	}
 	if p.PeriodType.Unit != "count" {
 		t.Errorf(`p.PeriodType.Unit got %q want "count"`, p.PeriodType.Unit)
+	}
+}
+
+// TestTraceStream tests the trace streaming endpoint.
+func TestTraceStream(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in -short mode")
+	}
+
+	// Create a test server
+	ts := httptest.NewServer(http.HandlerFunc(Trace))
+	defer ts.Close()
+
+	// Create a context with timeout to limit streaming duration
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	// Request streaming trace with short interval
+	req, err := http.NewRequestWithContext(ctx, "GET", ts.URL+"?stream=1&interval=0.5", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to make request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Check headers
+	if got, want := resp.Header.Get("Content-Type"), "application/octet-stream"; got != want {
+		t.Errorf("Content-Type: got %q; want %q", got, want)
+	}
+	if got, want := resp.Header.Get("X-Content-Type-Options"), "nosniff"; got != want {
+		t.Errorf("X-Content-Type-Options: got %q; want %q", got, want)
+	}
+
+	// Read at least one snapshot
+	snapshots := 0
+	for snapshots < 2 {
+		// Read length prefix (8 bytes, little-endian)
+		var lenBuf [8]byte
+		_, err := io.ReadFull(resp.Body, lenBuf[:])
+		if err != nil {
+			if ctx.Err() != nil {
+				// Context canceled, expected
+				break
+			}
+			t.Fatalf("failed to read length prefix: %v", err)
+		}
+
+		length := binary.LittleEndian.Uint64(lenBuf[:])
+		if length == 0 {
+			t.Fatal("got zero-length snapshot")
+		}
+
+		// Read trace data
+		data := make([]byte, length)
+		_, err = io.ReadFull(resp.Body, data)
+		if err != nil {
+			if ctx.Err() != nil {
+				break
+			}
+			t.Fatalf("failed to read trace data: %v", err)
+		}
+
+		// Verify trace header magic bytes "go 1." prefix
+		if !bytes.HasPrefix(data, []byte("go 1.")) {
+			t.Errorf("snapshot %d: invalid trace header, got prefix %q", snapshots, data[:min(10, len(data))])
+		}
+
+		snapshots++
+		t.Logf("received snapshot %d: %d bytes", snapshots, length)
+	}
+
+	if snapshots < 1 {
+		t.Error("expected at least 1 snapshot")
+	}
+}
+
+// TestTraceStreamClientDisconnect tests that the streaming endpoint handles client disconnect.
+func TestTraceStreamClientDisconnect(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in -short mode")
+	}
+
+	// Create a test server
+	ts := httptest.NewServer(http.HandlerFunc(Trace))
+	defer ts.Close()
+
+	// Create a context that we'll cancel immediately after connecting
+	ctx, cancel := context.WithCancel(context.Background())
+
+	req, err := http.NewRequestWithContext(ctx, "GET", ts.URL+"?stream=1&interval=1", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to make request: %v", err)
+	}
+
+	// Cancel the context to simulate client disconnect
+	cancel()
+	resp.Body.Close()
+
+	// Give the server time to clean up
+	time.Sleep(100 * time.Millisecond)
+
+	// If we get here without hanging, the test passes
+}
+
+// TestTraceStreamParameters tests that streaming parameters are parsed correctly.
+func TestTraceStreamParameters(t *testing.T) {
+	testCases := []struct {
+		name    string
+		params  string
+		wantErr bool
+	}{
+		{"default params", "stream=1", false},
+		{"custom interval", "stream=1&interval=2", false},
+		{"custom maxbytes", "stream=1&maxbytes=5242880", false},
+		{"custom minage", "stream=1&minage=5", false},
+		{"all custom", "stream=1&interval=0.5&maxbytes=1048576&minage=2", false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(Trace))
+			defer ts.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			req, err := http.NewRequestWithContext(ctx, "GET", ts.URL+"?"+tc.params, nil)
+			if err != nil {
+				t.Fatalf("failed to create request: %v", err)
+			}
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("failed to make request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if tc.wantErr {
+				if resp.StatusCode == http.StatusOK {
+					t.Error("expected error status code, got OK")
+				}
+				return
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Errorf("unexpected status code %d: %s", resp.StatusCode, body)
+			}
+		})
+	}
+}
+
+// TestTraceStreamFilter tests the filter parameter for trace streaming.
+func TestTraceStreamFilter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in -short mode")
+	}
+
+	testCases := []struct {
+		name   string
+		filter string
+	}{
+		{"numeric filter", "stream=1&filter=3"},
+		{"http filter", "stream=1&filter=http"},
+		{"http,sql filter", "stream=1&filter=http,sql"},
+		{"all filter", "stream=1&filter=all"},
+		{"core,custom filter", "stream=1&filter=core,custom"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(Trace))
+			defer ts.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			req, err := http.NewRequestWithContext(ctx, "GET", ts.URL+"?"+tc.filter, nil)
+			if err != nil {
+				t.Fatalf("failed to create request: %v", err)
+			}
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("failed to make request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Errorf("unexpected status code %d: %s", resp.StatusCode, body)
+				return
+			}
+
+			// Read at least one snapshot to verify streaming works with filter
+			var lenBuf [8]byte
+			_, err = io.ReadFull(resp.Body, lenBuf[:])
+			if err != nil && ctx.Err() == nil {
+				t.Fatalf("failed to read length prefix: %v", err)
+			}
+
+			length := binary.LittleEndian.Uint64(lenBuf[:])
+			if length == 0 {
+				t.Error("got zero-length snapshot")
+			}
+
+			t.Logf("filter %q: received snapshot of %d bytes", tc.filter, length)
+		})
 	}
 }

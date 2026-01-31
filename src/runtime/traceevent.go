@@ -55,8 +55,36 @@ func (tl traceLocker) rawEventWriter() traceEventWriter {
 }
 
 // event writes out a trace event.
+//
+// Events are filtered based on their category. If the event's category
+// is not enabled in trace.enabledCategories, the event is silently dropped.
+// Structural events (Category == 0) and CategoryCore events are always emitted.
 func (e traceEventWriter) event(ev tracev2.EventType, args ...traceArg) {
+	// Check if this event's category is enabled.
+	// Structural events have Category == 0 and are always emitted.
+	// CategoryCore events are always enabled.
+	if !traceCategoryEnabled(ev) {
+		return
+	}
 	e.tl.writer().event(ev, args...).end()
+}
+
+// traceCategoryEnabled returns true if the given event type's category is enabled.
+// Structural events (Category == 0) are always enabled.
+// This function is designed to be inlined for performance.
+//
+//go:nosplit
+func traceCategoryEnabled(ev tracev2.EventType) bool {
+	specs := tracev2.Specs()
+	if int(ev) >= len(specs) {
+		return true // Unknown event, allow it
+	}
+	category := specs[ev].Category
+	if category == 0 {
+		return true // Structural event, always enabled
+	}
+	enabled := trace.enabledCategories.Load()
+	return enabled&uint32(category) != 0
 }
 
 // stack takes a stack trace skipping the provided number of frames.

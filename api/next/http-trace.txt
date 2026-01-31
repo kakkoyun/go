@@ -1,0 +1,12 @@
+pkg runtime/trace, func HTTPClientRequest(context.Context, TraceContext, string, string) *HTTPSpan #XXXXX
+pkg runtime/trace, func HTTPServerRequest(context.Context, TraceContext, string, string) *HTTPSpan #XXXXX
+pkg runtime/trace, func NewSpanID() uint64 #XXXXX
+pkg runtime/trace, func NewTraceContext() TraceContext #XXXXX
+pkg runtime/trace, func ParseTraceContext(string) (TraceContext, bool) #XXXXX
+pkg runtime/trace, method (*HTTPSpan) End(int) #XXXXX
+pkg runtime/trace, method (TraceContext) FormatTraceContext() string #XXXXX
+pkg runtime/trace, type HTTPSpan struct #XXXXX
+pkg runtime/trace, type TraceContext struct #XXXXX
+pkg runtime/trace, type TraceContext struct, SpanID uint64 #XXXXX
+pkg runtime/trace, type TraceContext struct, TraceIDHi uint64 #XXXXX
+pkg runtime/trace, type TraceContext struct, TraceIDLo uint64 #XXXXX

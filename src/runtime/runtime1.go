@@ -349,6 +349,14 @@ var debug struct {
 	// to os.Setenv("GODEBUG").
 	traceallocfree atomic.Int32
 
+	// Trace event category controls. Each enables a specific category
+	// of trace events when execution tracing is active.
+	// Values can be changed at any time via os.Setenv("GODEBUG").
+	tracehttp atomic.Int32 // Enable HTTP client/server trace events
+	tracesql  atomic.Int32 // Enable SQL/database trace events
+	tracetls  atomic.Int32 // Enable TLS handshake trace events
+	tracenet  atomic.Int32 // Enable network (DNS, connect) trace events
+
 	panicnil atomic.Int32
 
 	// asynctimerchan controls whether timer channels
@@ -397,6 +405,10 @@ var dbgvars = []*dbgVar{
 	{name: "traceadvanceperiod", value: &debug.traceadvanceperiod},
 	{name: "traceallocfree", atomic: &debug.traceallocfree},
 	{name: "tracecheckstackownership", value: &debug.traceCheckStackOwnership},
+	{name: "tracehttp", atomic: &debug.tracehttp},
+	{name: "tracenet", atomic: &debug.tracenet},
+	{name: "tracesql", atomic: &debug.tracesql},
+	{name: "tracetls", atomic: &debug.tracetls},
 	{name: "tracebackancestors", value: &debug.tracebackancestors},
 	{name: "tracebacklabels", atomic: &debug.tracebacklabels, def: 0},
 	{name: "tracefpunwindoff", value: &debug.tracefpunwindoff},
