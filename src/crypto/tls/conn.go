@@ -17,6 +17,7 @@ import (
 	"hash"
 	"io"
 	"net"
+	"runtime/trace/usdt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1558,10 +1559,17 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
 	c.in.Lock()
 	defer c.in.Unlock()
 
+	var isClient int8
+	if c.isClient {
+		isClient = 1
+	}
+	usdt.Probe1("tls", "handshake_start", isClient)
 	c.handshakeErr = c.handshakeFn(handshakeCtx)
 	if c.handshakeErr == nil {
+		usdt.Probe1("tls", "handshake_end", isClient)
 		c.handshakes++
 	} else {
+		usdt.Probe1("tls", "handshake_error", isClient)
 		// If an error occurred during the handshake try to flush the
 		// alert that might be left in the buffer.
 		c.flush()

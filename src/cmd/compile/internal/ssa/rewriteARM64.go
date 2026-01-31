@@ -2227,6 +2227,21 @@ func rewriteValueARM64(v *Value) bool {
 	case OpTruncToUint8Uint16x8:
 		v.Op = OpARM64VXTN8H
 		return true
+	case OpUSDTProbe:
+		v.Op = OpARM64LoweredUSDTProbe
+		return true
+	case OpUSDTProbe1:
+		v.Op = OpARM64LoweredUSDTProbe1
+		return true
+	case OpUSDTProbe2:
+		v.Op = OpARM64LoweredUSDTProbe2
+		return true
+	case OpUSDTProbe3:
+		v.Op = OpARM64LoweredUSDTProbe3
+		return true
+	case OpUSDTProbe4:
+		v.Op = OpARM64LoweredUSDTProbe4
+		return true
 	case OpWB:
 		v.Op = OpARM64LoweredWB
 		return true

@@ -550,6 +550,12 @@ func init() {
 
 		// pseudo-ops
 		{name: "LoweredNilCheck", argLength: 2, reg: regInfo{inputs: []regMask{gpg}}, nilCheck: true, faultOnNilArg0: true},                                                                                                                                                      // panic if arg0 is nil.  arg1=mem.
+		{name: "LoweredUSDTProbe", argLength: 1, reg: regInfo{}, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true},                                                                                                                                                          // USDT probe lowered to NOP. arg0=mem, aux=*USDTProbeInfo
+		// LoweredUSDTProbe1-4: USDT probes with arguments. Arguments placed in GP registers for argdesc.
+		{name: "LoweredUSDTProbe1", argLength: 2, reg: regInfo{inputs: []regMask{gp}}, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true},
+		{name: "LoweredUSDTProbe2", argLength: 3, reg: regInfo{inputs: []regMask{gp, gp}}, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true},
+		{name: "LoweredUSDTProbe3", argLength: 4, reg: regInfo{inputs: []regMask{gp, gp, gp}}, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true},
+		{name: "LoweredUSDTProbe4", argLength: 5, reg: regInfo{inputs: []regMask{gp, gp, gp, gp}}, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true},
 		{name: "LoweredMemEq", argLength: 4, reg: regInfo{inputs: []regMask{buildReg("R0"), buildReg("R1"), buildReg("R2")}, outputs: []regMask{buildReg("R0")}, clobbers: callerSave}, typ: "Bool", faultOnNilArg0: true, faultOnNilArg1: true, clobberFlags: true, call: true}, // arg0, arg1 - pointers to memory, arg2=size, arg3=mem.
 
 		{name: "Equal", argLength: 1, reg: readflags, earlyOk: true, zeroUpperBits: 56},            // bool, true flags encode x==y false otherwise.

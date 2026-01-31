@@ -485,6 +485,10 @@ type FuncInfo struct {
 	InlMarks  []InlMark
 	spills    []RegSpill
 
+	// USDTProbes records USDT probe locations for .note.stapsdt generation.
+	USDTProbes    []USDTProbe
+	USDTProbesSym *LSym // serialized USDT probe metadata for linker
+
 	dwarfInfoSym       *LSym
 	dwarfLocSym        *LSym
 	dwarfRangesSym     *LSym
@@ -815,12 +819,41 @@ type InlMark struct {
 	id int32
 }
 
+// USDTProbe records a USDT (Userland Statically Defined Tracing) probe location.
+// The linker uses this to emit .note.stapsdt ELF sections that tracers
+// like bpftrace and SystemTap can discover and attach to.
+type USDTProbe struct {
+	// P is the NOP instruction that tracers will patch to a breakpoint.
+	// This pointer is only valid until pp.Free() is called after Assemble.
+	P *Prog
+	// Offset is the PC offset of the probe within the function.
+	// This is computed from P.Pc after assembly and stored here for later use.
+	Offset int64
+	// Provider is the probe provider name (e.g., "myapp").
+	Provider string
+	// Name is the probe name (e.g., "request_start").
+	Name string
+	// ArgDesc is the SystemTap SDT argument descriptor string.
+	// Format: "[size]@[location]" for each argument, space-separated.
+	// Size is negative for signed values.
+	// Examples: "-4@%eax" (int32 in eax), "8@%rsi" (uint64 in rsi), "-4@w0" (int32 in ARM64 w0)
+	ArgDesc string
+}
+
 // Mark p as the instruction to set as the pc when
 // "unwinding" the inlining global frame id. Usually it should be
 // instruction with a file:line at the callsite, and occur
 // just before the body of the inlined function.
 func (fi *FuncInfo) AddInlMark(p *Prog, id int32) {
 	fi.InlMarks = append(fi.InlMarks, InlMark{p: p, id: id})
+}
+
+// AddUSDTProbe records a USDT probe location for the linker to emit
+// in the .note.stapsdt ELF section.
+// The argDesc parameter contains the SystemTap SDT argument descriptor string
+// (e.g., "-4@%eax 8@%rsi" for AMD64 or "-4@w0 8@x1" for ARM64).
+func (fi *FuncInfo) AddUSDTProbe(p *Prog, provider, name, argDesc string) {
+	fi.USDTProbes = append(fi.USDTProbes, USDTProbe{P: p, Provider: provider, Name: name, ArgDesc: argDesc})
 }
 
 // AddSpill appends a spill record to the list for FuncInfo fi

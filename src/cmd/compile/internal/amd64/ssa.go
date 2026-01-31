@@ -65,6 +65,93 @@ func isHighFPReg(r int16) bool {
 	return x86.REG_X16 <= r && r <= x86.REG_X31 || x86.REG_Y16 <= r && r <= x86.REG_Y31 || x86.REG_Z16 <= r && r <= x86.REG_Z31
 }
 
+// amd64RegToGAS converts a Go register number to GAS (GNU Assembler) notation
+// for USDT argdesc. The size parameter determines which register variant to use.
+// Examples: REG_AX with size 8 -> "%rax", with size 4 -> "%eax", with size 1 -> "%al"
+func amd64RegToGAS(r int16, size int8) string {
+	// Map from Go register constants to base names
+	var baseName string
+	switch r {
+	case x86.REG_AX:
+		baseName = "a"
+	case x86.REG_BX:
+		baseName = "b"
+	case x86.REG_CX:
+		baseName = "c"
+	case x86.REG_DX:
+		baseName = "d"
+	case x86.REG_SI:
+		baseName = "si"
+	case x86.REG_DI:
+		baseName = "di"
+	case x86.REG_BP:
+		baseName = "bp"
+	case x86.REG_SP:
+		baseName = "sp"
+	case x86.REG_R8:
+		return amd64ExtRegToGAS("r8", size)
+	case x86.REG_R9:
+		return amd64ExtRegToGAS("r9", size)
+	case x86.REG_R10:
+		return amd64ExtRegToGAS("r10", size)
+	case x86.REG_R11:
+		return amd64ExtRegToGAS("r11", size)
+	case x86.REG_R12:
+		return amd64ExtRegToGAS("r12", size)
+	case x86.REG_R13:
+		return amd64ExtRegToGAS("r13", size)
+	case x86.REG_R14:
+		return amd64ExtRegToGAS("r14", size)
+	case x86.REG_R15:
+		return amd64ExtRegToGAS("r15", size)
+	default:
+		// Fallback: use hex register number
+		return fmt.Sprintf("%%r%d", r)
+	}
+
+	// Classic registers (ax, bx, cx, dx, si, di, bp, sp)
+	switch size {
+	case 1:
+		if baseName == "si" || baseName == "di" || baseName == "bp" || baseName == "sp" {
+			return "%" + baseName + "l"
+		}
+		return "%" + baseName[:1] + "l" // al, bl, cl, dl
+	case 2:
+		if baseName == "si" || baseName == "di" || baseName == "bp" || baseName == "sp" {
+			return "%" + baseName
+		}
+		return "%" + baseName[:1] + "x" // ax, bx, cx, dx
+	case 4:
+		if baseName == "si" || baseName == "di" || baseName == "bp" || baseName == "sp" {
+			return "%e" + baseName
+		}
+		return "%e" + baseName[:1] + "x" // eax, ebx, ecx, edx
+	case 8:
+		if baseName == "si" || baseName == "di" || baseName == "bp" || baseName == "sp" {
+			return "%r" + baseName
+		}
+		return "%r" + baseName[:1] + "x" // rax, rbx, rcx, rdx
+	default:
+		return "%r" + baseName[:1] + "x" // default to 64-bit
+	}
+}
+
+// amd64ExtRegToGAS handles extended registers R8-R15.
+func amd64ExtRegToGAS(base string, size int8) string {
+	switch size {
+	case 1:
+		return "%" + base + "b" // r8b, r9b, ...
+	case 2:
+		return "%" + base + "w" // r8w, r9w, ...
+	case 4:
+		return "%" + base + "d" // r8d, r9d, ...
+	case 8:
+		return "%" + base // r8, r9, ...
+	default:
+		return "%" + base
+	}
+}
+
 // loadByRegWidth returns the load instruction of the given register of a given width.
 func loadByRegWidth(r int16, width int64) obj.As {
 	// Avoid partial register write for GPR
@@ -1658,6 +1745,44 @@ func ssaGenValue(s *ssagen.State, v *ssa.Value) {
 		if base.Debug.Nil != 0 && v.Pos.Line() > 1 { // v.Pos.Line()==1 in generated wrappers
 			base.WarnfAt(v.Pos, "generated nil check")
 		}
+	case ssa.OpAMD64LoweredUSDTProbe:
+		// Emit a single-byte NOP (0x90) for USDT probe.
+		// Tracers (bpftrace, SystemTap) will patch this NOP to INT3 (0xCC) at runtime.
+		// Using ABYTE with 0x90 emits an actual byte, unlike obj.ANOP which is a pseudo-op.
+		p := s.Prog(x86.ABYTE)
+		p.From.Type = obj.TYPE_CONST
+		p.From.Offset = 0x90 // NOP opcode
+		// Record probe location and metadata for linker
+		probeInfo := v.Aux.(*ssa.USDTProbeInfo)
+		s.FuncInfo().AddUSDTProbe(p, probeInfo.Provider, probeInfo.Name, "")
+	case ssa.OpAMD64LoweredUSDTProbe1, ssa.OpAMD64LoweredUSDTProbe2, ssa.OpAMD64LoweredUSDTProbe3, ssa.OpAMD64LoweredUSDTProbe4:
+		// Emit a single-byte NOP (0x90) for USDT probe with arguments.
+		p := s.Prog(x86.ABYTE)
+		p.From.Type = obj.TYPE_CONST
+		p.From.Offset = 0x90 // NOP opcode
+
+		probeInfo := v.Aux.(*ssa.USDTProbeInfo)
+
+		// Build argdesc string from allocated registers and argument types.
+		// Format: "[size]@%[reg]" for each argument, space-separated.
+		// Negative size indicates signed value.
+		var argdesc string
+		numArgs := len(probeInfo.ArgTypes)
+		for i := 0; i < numArgs; i++ {
+			if i > 0 {
+				argdesc += " "
+			}
+			argType := probeInfo.ArgTypes[i]
+			reg := v.Args[i].Reg()
+			size := int(argType.Size)
+			if argType.Signed {
+				size = -size
+			}
+			gasReg := amd64RegToGAS(reg, argType.Size)
+			argdesc += fmt.Sprintf("%d@%s", size, gasReg)
+		}
+
+		s.FuncInfo().AddUSDTProbe(p, probeInfo.Provider, probeInfo.Name, argdesc)
 	case ssa.OpAMD64MOVBatomicload, ssa.OpAMD64MOVLatomicload, ssa.OpAMD64MOVQatomicload:
 		p := s.Prog(v.Op.Asm())
 		p.From.Type = obj.TYPE_MEM

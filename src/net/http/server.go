@@ -31,9 +31,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	_ "unsafe" // for linkname
+	"unsafe"
 
 	"golang.org/x/net/http/httpguts"
+	"runtime/trace/usdt"
 )
 
 // Errors used by the HTTP server.
@@ -1697,6 +1698,8 @@ func (w *response) finishRequest() {
 	if !w.wroteHeader {
 		w.WriteHeader(StatusOK)
 	}
+	// Emit USDT probe with status code after ensuring WriteHeader was called
+	usdt.Probe1("net_http", "server_request_end", int32(w.status))
 
 	w.w.Flush()
 	putBufioWriter(w.w)
@@ -2130,6 +2133,9 @@ func (c *conn) serve(ctx context.Context) {
 		// But we're not going to implement HTTP pipelining because it
 		// was never deployed in the wild and the answer is HTTP/2.
 		inFlightResponse = w
+		usdt.Probe4("net_http", "server_request_start",
+			unsafe.Pointer(unsafe.StringData(w.req.Method)), int64(len(w.req.Method)),
+			unsafe.Pointer(unsafe.StringData(w.req.URL.Path)), int64(len(w.req.URL.Path)))
 		serverHandler{c.server}.ServeHTTP(w, w.req)
 		inFlightResponse = nil
 		w.cancelCtx()

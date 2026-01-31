@@ -1,0 +1,40 @@
+#!/usr/bin/env bpftrace
+// Copyright 2025 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// trace_basic.bt - Basic USDT probe tracing
+//
+// Usage:
+//   1. Build your Go binary for Linux
+//   2. Find probe addresses: readelf -n ./binary | grep Location
+//   3. Replace ADDR below with actual addresses
+//   4. Run: sudo bpftrace trace_basic.bt -c ./binary
+//
+// Example:
+//   readelf -n ./basic | grep -B2 work_start
+//   # Note the Location address, e.g., 0x47ae00
+//   # Edit this script to use that address
+//   sudo bpftrace trace_basic.bt -c ./basic
+
+BEGIN {
+    printf("Tracing USDT probes... Hit Ctrl-C to stop.\n\n");
+}
+
+// Replace 0x47ae00 with your actual probe address from readelf -n
+// uprobe:./basic:0x47ae00 {
+//     printf("work_start triggered on thread %d\n", tid);
+//     @starts[tid] = nsecs;
+// }
+
+// Replace 0x47ae10 with your actual probe address
+// uprobe:./basic:0x47ae10 {
+//     $latency = (nsecs - @starts[tid]) / 1000;
+//     printf("work_end: latency=%dus\n", $latency);
+//     delete(@starts[tid]);
+// }
+
+END {
+    printf("\nTracing complete.\n");
+    clear(@starts);
+}

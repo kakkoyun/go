@@ -143,3 +143,93 @@ func (inl *InlTreeNode) Read(b []byte) []byte {
 	inl.ParentPC = int32(readUint32())
 	return b
 }
+
+// USDTProbeInfo stores USDT probe metadata for .note.stapsdt section.
+// This is serialized as an aux symbol (AuxUSDTProbes).
+type USDTProbeInfo struct {
+	Probes []USDTProbe
+}
+
+// USDTProbe represents a single USDT probe location.
+type USDTProbe struct {
+	Offset   int32  // PC offset relative to function start
+	Provider string // Provider name (e.g., "myapp")
+	Name     string // Probe name (e.g., "request_start")
+	ArgDesc  string // SystemTap SDT argument descriptor (e.g., "-4@%eax 8@%rsi")
+}
+
+// Write serializes the USDT probe info.
+// Format: NumProbes uint32, then for each probe:
+//   - Offset int32
+//   - ProviderLen uint32, ProviderBytes [...]byte
+//   - NameLen uint32, NameBytes [...]byte
+//   - ArgDescLen uint32, ArgDescBytes [...]byte
+func (u *USDTProbeInfo) Write(w *bytes.Buffer) {
+	var b [4]byte
+	writeUint32 := func(x uint32) {
+		binary.LittleEndian.PutUint32(b[:], x)
+		w.Write(b[:])
+	}
+	writeString := func(s string) {
+		writeUint32(uint32(len(s)))
+		w.WriteString(s)
+	}
+
+	writeUint32(uint32(len(u.Probes)))
+	for _, p := range u.Probes {
+		writeUint32(uint32(p.Offset))
+		writeString(p.Provider)
+		writeString(p.Name)
+		writeString(p.ArgDesc)
+	}
+}
+
+// Read deserializes USDT probe info from a byte slice.
+func (u *USDTProbeInfo) Read(b []byte) {
+	if len(b) < 4 {
+		return
+	}
+	numProbes := binary.LittleEndian.Uint32(b)
+	b = b[4:]
+	u.Probes = make([]USDTProbe, 0, numProbes)
+	for i := uint32(0); i < numProbes && len(b) >= 4; i++ {
+		offset := int32(binary.LittleEndian.Uint32(b))
+		b = b[4:]
+		if len(b) < 4 {
+			break
+		}
+		providerLen := binary.LittleEndian.Uint32(b)
+		b = b[4:]
+		if len(b) < int(providerLen) {
+			break
+		}
+		provider := string(b[:providerLen])
+		b = b[providerLen:]
+		if len(b) < 4 {
+			break
+		}
+		nameLen := binary.LittleEndian.Uint32(b)
+		b = b[4:]
+		if len(b) < int(nameLen) {
+			break
+		}
+		name := string(b[:nameLen])
+		b = b[nameLen:]
+		if len(b) < 4 {
+			break
+		}
+		argDescLen := binary.LittleEndian.Uint32(b)
+		b = b[4:]
+		if len(b) < int(argDescLen) {
+			break
+		}
+		argDesc := string(b[:argDescLen])
+		b = b[argDescLen:]
+		u.Probes = append(u.Probes, USDTProbe{
+			Offset:   offset,
+			Provider: provider,
+			Name:     name,
+			ArgDesc:  argDesc,
+		})
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"runtime/trace/usdt"
 	"syscall"
 )
 
@@ -160,6 +161,7 @@ func (ln *TCPListener) accept() (*TCPConn, error) {
 	if err != nil {
 		return nil, err
 	}
+	usdt.Probe("net", "conn_accept")
 	return newTCPConn(fd, ln.lc.KeepAlive, ln.lc.KeepAliveConfig, testPreHookSetKeepAlive, testHookSetKeepAlive), nil
 }
 

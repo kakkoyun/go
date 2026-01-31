@@ -454,6 +454,7 @@ const (
 	AuxWasmImport
 	AuxWasmType
 	AuxSehUnwindInfo
+	AuxUSDTProbes // USDT probe metadata for .note.stapsdt section
 )
 
 func (a *Aux) Type() uint8 { return a[0] }

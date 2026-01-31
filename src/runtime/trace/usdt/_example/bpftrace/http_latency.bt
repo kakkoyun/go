@@ -1,0 +1,67 @@
+#!/usr/bin/env bpftrace
+// Copyright 2025 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// http_latency.bt - Trace HTTP request latency from net/http probes
+//
+// The net/http package includes built-in USDT probes:
+//   - net_http:server_request_start
+//   - net_http:server_request_end (arg0 = status code)
+//   - net_http:client_request_start
+//   - net_http:client_response_received (arg0 = status code)
+//
+// Usage:
+//   1. Build your Go HTTP server for Linux
+//   2. Find probe addresses:
+//      readelf -n ./server | grep -E "(net_http|Location|Arguments)"
+//   3. Replace addresses below with actual values
+//   4. Run: sudo bpftrace http_latency.bt -c ./server
+//
+// Example output:
+//   Server request completed: status=200 latency=1234us
+//   Server request completed: status=404 latency=567us
+
+BEGIN {
+    printf("Tracing HTTP requests... Hit Ctrl-C to stop.\n\n");
+}
+
+// Server-side tracing
+// Replace 0xADDR1 with server_request_start address
+// uprobe:./server:0xADDR1 {
+//     @server_start[tid] = nsecs;
+// }
+
+// Replace 0xADDR2 with server_request_end address
+// Note: arg0 contains status code (per Arguments: -4@%eax)
+// uprobe:./server:0xADDR2 {
+//     $latency = (nsecs - @server_start[tid]) / 1000;
+//     $status = (int32)arg0;
+//     printf("Server request: status=%d latency=%dus\n", $status, $latency);
+//     @latency_us = hist($latency);
+//     @status_codes[$status] = count();
+//     delete(@server_start[tid]);
+// }
+
+// Client-side tracing
+// Replace 0xADDR3 with client_request_start address
+// uprobe:./server:0xADDR3 {
+//     @client_start[tid] = nsecs;
+// }
+
+// Replace 0xADDR4 with client_response_received address
+// uprobe:./server:0xADDR4 {
+//     $latency = (nsecs - @client_start[tid]) / 1000;
+//     $status = (int32)arg0;
+//     printf("Client response: status=%d latency=%dus\n", $status, $latency);
+//     delete(@client_start[tid]);
+// }
+
+END {
+    printf("\n=== Latency Histogram (us) ===\n");
+    print(@latency_us);
+    printf("\n=== Status Code Distribution ===\n");
+    print(@status_codes);
+    clear(@server_start);
+    clear(@client_start);
+}

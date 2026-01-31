@@ -975,6 +975,130 @@ const (
 
 var ELF_NOTE_GO_NAME = []byte("Go\x00\x00")
 
+// USDT (SystemTap SDT) note constants
+const (
+	ELF_NOTE_STAPSDT_NAME_SZ = 8 // "stapsdt\0"
+	ELF_NOTE_STAPSDT_TYPE    = 3 // NT_STAPSDT
+)
+
+var ELF_NOTE_STAPSDT_NAME = []byte("stapsdt\x00")
+
+// usdtProbeRecord holds a USDT probe for ELF note generation.
+type usdtProbeRecord struct {
+	Addr     uint64 // Probe address
+	Provider string // Provider name
+	Name     string // Probe name
+	ArgDesc  string // Argument descriptor (e.g., "-4@%eax 8@%rsi")
+}
+
+// Global list of USDT probes collected during linking.
+var usdtProbes []usdtProbeRecord
+
+// elfstapsdtsize calculates the size of the .note.stapsdt section.
+func elfstapsdtsize() int {
+	if len(usdtProbes) == 0 {
+		return 0
+	}
+	total := 0
+	for _, p := range usdtProbes {
+		// Note header: namesz(4) + descsz(4) + type(4) = 12
+		// Name: "stapsdt\0" padded to 4 bytes = 8
+		// Desc: pc(8) + base(8) + semaphore(8) + provider\0 + name\0 + argdesc\0
+		descSz := 24 + len(p.Provider) + 1 + len(p.Name) + 1 + len(p.ArgDesc) + 1
+		paddedDescSz := int(Rnd(int64(descSz), 4))
+		noteSz := 12 + 8 + paddedDescSz // header + name + padded desc
+		total += noteSz
+	}
+	return total
+}
+
+// elfstapsdt reserves space for .note.stapsdt section.
+func elfstapsdt(sh *ElfShdr, startva uint64, resoff uint64) int {
+	n := elfstapsdtsize()
+	if n == 0 {
+		return 0
+	}
+	return elfnote(sh, startva, resoff, n)
+}
+
+// elfwritestapsdt writes the .note.stapsdt section.
+func elfwritestapsdt(out *OutBuf, baseAddr uint64) int {
+	if len(usdtProbes) == 0 {
+		return 0
+	}
+	sh := elfshname(".note.stapsdt")
+	if sh == nil {
+		return 0
+	}
+	out.SeekSet(int64(sh.Off))
+
+	var zero [4]byte
+	written := 0
+	for _, p := range usdtProbes {
+		// Calculate descriptor size
+		descSz := 24 + len(p.Provider) + 1 + len(p.Name) + 1 + len(p.ArgDesc) + 1
+		paddedDescSz := int(Rnd(int64(descSz), 4))
+
+		// Note header
+		out.Write32(ELF_NOTE_STAPSDT_NAME_SZ) // namesz
+		out.Write32(uint32(paddedDescSz))     // descsz
+		out.Write32(ELF_NOTE_STAPSDT_TYPE)    // type
+		out.Write(ELF_NOTE_STAPSDT_NAME)      // "stapsdt\0"
+
+		// Note descriptor
+		out.Write64(p.Addr)    // probe location
+		out.Write64(baseAddr)  // base address
+		out.Write64(0)         // semaphore (0 for now)
+		out.WriteString(p.Provider)
+		out.Write8(0) // null terminator
+		out.WriteString(p.Name)
+		out.Write8(0) // null terminator
+		out.WriteString(p.ArgDesc)
+		out.Write8(0) // null terminator
+
+		// Padding to 4-byte boundary
+		padding := paddedDescSz - descSz
+		if padding > 0 {
+			out.Write(zero[:padding])
+		}
+
+		written += 12 + 8 + paddedDescSz
+	}
+
+	return written
+}
+
+// collectUSDTProbes gathers all USDT probes from text symbols.
+// Must be called after symbol values are assigned.
+func collectUSDTProbes(ctxt *Link) {
+	// Only collect for Linux ELF targets
+	if ctxt.HeadType != objabi.Hlinux {
+		return
+	}
+
+	ldr := ctxt.loader
+	usdtProbes = nil // Reset global list
+
+	for _, s := range ctxt.Textp {
+		probeInfo := ldr.USDTProbes(s)
+		if probeInfo == nil || len(probeInfo.Probes) == 0 {
+			continue
+		}
+
+		// Get the function's base address
+		funcAddr := uint64(ldr.SymValue(s))
+
+		for _, probe := range probeInfo.Probes {
+			usdtProbes = append(usdtProbes, usdtProbeRecord{
+				Addr:     funcAddr + uint64(probe.Offset),
+				Provider: probe.Provider,
+				Name:     probe.Name,
+				ArgDesc:  probe.ArgDesc,
+			})
+		}
+	}
+}
+
 var elfverneed int
 
 type Elfaux struct {
@@ -1749,6 +1873,9 @@ func asmbElf(ctxt *Link) {
 		elfreserve += elfreserve + numtext*64*2
 	}
 
+	// Collect USDT probes for .note.stapsdt section
+	collectUSDTProbes(ctxt)
+
 	startva := *FlagTextAddr - int64(HEADR)
 	resoff := elfreserve
 
@@ -1903,6 +2030,13 @@ func asmbElf(ctxt *Link) {
 	if *flagBuildid != "" {
 		sh := elfshname(".note.go.buildid")
 		resoff -= int64(elfgobuildid(sh, uint64(startva), uint64(resoff)))
+		phsh(getpnote(), sh)
+	}
+
+	// USDT probes for SystemTap/bpftrace (.note.stapsdt)
+	if len(usdtProbes) > 0 {
+		sh := elfshname(".note.stapsdt")
+		resoff -= int64(elfstapsdt(sh, uint64(startva), uint64(resoff)))
 		phsh(getpnote(), sh)
 	}
 
@@ -2294,6 +2428,11 @@ elfobj:
 		}
 		if *flagBuildid != "" {
 			a += int64(elfwritegobuildid(ctxt.Out))
+		}
+		if len(usdtProbes) > 0 {
+			// Base address is the text segment start
+			baseAddr := uint64(Segtext.Vaddr)
+			a += int64(elfwritestapsdt(ctxt.Out, baseAddr))
 		}
 	}
 	if *flagRace && ctxt.IsNetbsd() {

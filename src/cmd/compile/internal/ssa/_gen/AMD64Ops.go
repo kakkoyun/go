@@ -1158,6 +1158,17 @@ func init() {
 		{name: "LoweredGetCallerSP", argLength: 1, reg: gp01, rematerializeable: true},
 		//arg0=ptr,arg1=mem, returns void.  Faults if ptr is nil.
 		{name: "LoweredNilCheck", argLength: 2, reg: regInfo{inputs: []regMask{gpsp}}, clobberFlags: true, nilCheck: true, faultOnNilArg0: true},
+		// LoweredUSDTProbe emits a NOP instruction for USDT probes.
+		// arg0=mem, returns mem. aux is *USDTProbeInfo with provider/name.
+		// Tracers patch NOP to INT3 at runtime to enable the probe.
+		{name: "LoweredUSDTProbe", argLength: 1, reg: regInfo{}, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true},
+		// LoweredUSDTProbe1-4: USDT probes with arguments.
+		// Arguments are placed in GP registers for argdesc generation.
+		// arg0..N-1=values, argN=mem. Returns mem.
+		{name: "LoweredUSDTProbe1", argLength: 2, reg: regInfo{inputs: []regMask{gp}}, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true},
+		{name: "LoweredUSDTProbe2", argLength: 3, reg: regInfo{inputs: []regMask{gp, gp}}, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true},
+		{name: "LoweredUSDTProbe3", argLength: 4, reg: regInfo{inputs: []regMask{gp, gp, gp}}, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true},
+		{name: "LoweredUSDTProbe4", argLength: 5, reg: regInfo{inputs: []regMask{gp, gp, gp, gp}}, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true},
 		// LoweredWB invokes runtime.gcWriteBarrier{auxint}. arg0=mem, auxint=# of buffer entries needed.
 		// It saves all GP registers if necessary, but may clobber others.
 		// Returns a pointer to a write barrier buffer in R11.

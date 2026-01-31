@@ -640,6 +640,9 @@ func (w *writer) Aux(s *LSym) {
 		if fn.WasmExport != nil {
 			w.aux1(goobj.AuxWasmType, fn.WasmExport.AuxSym)
 		}
+		if fn.USDTProbesSym != nil && fn.USDTProbesSym.Size != 0 {
+			w.aux1(goobj.AuxUSDTProbes, fn.USDTProbesSym)
+		}
 	} else if v := s.VarInfo(); v != nil {
 		if v.dwarfInfoSym != nil && v.dwarfInfoSym.Size != 0 {
 			w.aux1(goobj.AuxDwarfInfo, v.dwarfInfoSym)
@@ -753,6 +756,9 @@ func nAuxSym(s *LSym) int {
 		if fn.WasmExport != nil {
 			n++
 		}
+		if len(fn.USDTProbes) > 0 {
+			n++
+		}
 	} else if v := s.VarInfo(); v != nil {
 		if v.dwarfInfoSym != nil && v.dwarfInfoSym.Size != 0 {
 			n++
@@ -812,6 +818,34 @@ func genFuncInfoSyms(ctxt *Link) {
 		infosyms = append(infosyms, isym)
 		fn.FuncInfoSym = isym
 		b.Reset()
+
+		// Generate USDT probes symbol if function has probes
+		if len(fn.USDTProbes) > 0 {
+			usdtInfo := goobj.USDTProbeInfo{
+				Probes: make([]goobj.USDTProbe, len(fn.USDTProbes)),
+			}
+			for i, p := range fn.USDTProbes {
+				usdtInfo.Probes[i] = goobj.USDTProbe{
+					Offset:   int32(p.Offset),
+					Provider: p.Provider,
+					Name:     p.Name,
+					ArgDesc:  p.ArgDesc,
+				}
+			}
+			usdtInfo.Write(&b)
+			usdtP := b.Bytes()
+			fn.USDTProbesSym = &LSym{
+				Type:   objabi.SDATA,
+				PkgIdx: goobj.PkgIdxSelf,
+				SymIdx: symidx,
+				P:      append([]byte(nil), usdtP...),
+				Size:   int64(len(usdtP)),
+			}
+			fn.USDTProbesSym.Set(AttrIndexed, true)
+			symidx++
+			infosyms = append(infosyms, fn.USDTProbesSym)
+			b.Reset()
+		}
 
 		auxsyms := []*LSym{fn.dwarfRangesSym, fn.dwarfLocSym, fn.dwarfDebugLinesSym, fn.dwarfInfoSym}
 		if wi := fn.WasmImport; wi != nil {
