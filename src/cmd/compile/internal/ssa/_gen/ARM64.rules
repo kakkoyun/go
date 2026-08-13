@@ -462,6 +462,11 @@
 // pseudo-ops
 (GetClosurePtr ...) => (LoweredGetClosurePtr ...)
 (GetCallerSP   ...) => (LoweredGetCallerSP   ...)
+(USDTProbe     ...) => (LoweredUSDTProbe     ...)
+(USDTProbe1    ...) => (LoweredUSDTProbe1    ...)
+(USDTProbe2    ...) => (LoweredUSDTProbe2    ...)
+(USDTProbe3    ...) => (LoweredUSDTProbe3    ...)
+(USDTProbe4    ...) => (LoweredUSDTProbe4    ...)
 (GetCallerPC   ...) => (LoweredGetCallerPC   ...)
 (MemEq ...) => (LoweredMemEq ...)
 

@@ -8,9 +8,13 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"runtime/trace/usdt"
+	"unsafe"
 )
 
 func ctxDriverPrepare(ctx context.Context, ci driver.Conn, query string) (driver.Stmt, error) {
+	usdt.Probe2("sql", "prepare",
+		unsafe.Pointer(unsafe.StringData(query)), int64(len(query)))
 	if ciCtx, is := ci.(driver.ConnPrepareContext); is {
 		return ciCtx.PrepareContext(ctx, query)
 	}
@@ -27,6 +31,8 @@ func ctxDriverPrepare(ctx context.Context, ci driver.Conn, query string) (driver
 }
 
 func ctxDriverExec(ctx context.Context, execerCtx driver.ExecerContext, execer driver.Execer, query string, nvdargs []driver.NamedValue) (driver.Result, error) {
+	usdt.Probe2("sql", "exec",
+		unsafe.Pointer(unsafe.StringData(query)), int64(len(query)))
 	if execerCtx != nil {
 		return execerCtx.ExecContext(ctx, query, nvdargs)
 	}
@@ -44,6 +50,8 @@ func ctxDriverExec(ctx context.Context, execerCtx driver.ExecerContext, execer d
 }
 
 func ctxDriverQuery(ctx context.Context, queryerCtx driver.QueryerContext, queryer driver.Queryer, query string, nvdargs []driver.NamedValue) (driver.Rows, error) {
+	usdt.Probe2("sql", "query",
+		unsafe.Pointer(unsafe.StringData(query)), int64(len(query)))
 	if queryerCtx != nil {
 		return queryerCtx.QueryContext(ctx, query, nvdargs)
 	}
@@ -61,6 +69,7 @@ func ctxDriverQuery(ctx context.Context, queryerCtx driver.QueryerContext, query
 }
 
 func ctxDriverStmtExec(ctx context.Context, si driver.Stmt, nvdargs []driver.NamedValue) (driver.Result, error) {
+	usdt.Probe("sql", "stmt_exec")
 	if siCtx, is := si.(driver.StmtExecContext); is {
 		return siCtx.ExecContext(ctx, nvdargs)
 	}
@@ -78,6 +87,7 @@ func ctxDriverStmtExec(ctx context.Context, si driver.Stmt, nvdargs []driver.Nam
 }
 
 func ctxDriverStmtQuery(ctx context.Context, si driver.Stmt, nvdargs []driver.NamedValue) (driver.Rows, error) {
+	usdt.Probe("sql", "stmt_query")
 	if siCtx, is := si.(driver.StmtQueryContext); is {
 		return siCtx.QueryContext(ctx, nvdargs)
 	}
@@ -95,6 +105,7 @@ func ctxDriverStmtQuery(ctx context.Context, si driver.Stmt, nvdargs []driver.Na
 }
 
 func ctxDriverBegin(ctx context.Context, opts *TxOptions, ci driver.Conn) (driver.Tx, error) {
+	usdt.Probe("sql", "tx_begin")
 	if ciCtx, is := ci.(driver.ConnBeginTx); is {
 		dopts := driver.TxOptions{}
 		if opts != nil {

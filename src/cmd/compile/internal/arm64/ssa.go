@@ -5,6 +5,7 @@
 package arm64
 
 import (
+	"fmt"
 	"math"
 
 	"cmd/compile/internal/base"
@@ -86,6 +87,29 @@ func storeByType(t *types.Type) obj.As {
 		}
 	}
 	panic("bad store type")
+}
+
+// arm64RegToGAS converts a Go register number to SystemTap SDT notation
+// for USDT argdesc. The size parameter determines which register variant to use.
+// ARM64 uses xN for 64-bit and wN for 32-bit (and smaller).
+// Examples: REG_R0 with size 8 -> "x0", with size 4 -> "w0"
+func arm64RegToGAS(r int16, size int8) string {
+	// Get register number (R0-R30)
+	regNum := -1
+	if arm64.REG_R0 <= r && r <= arm64.REG_R30 {
+		regNum = int(r - arm64.REG_R0)
+	}
+
+	if regNum < 0 {
+		// Unknown register, fallback
+		return fmt.Sprintf("r%d", r)
+	}
+
+	// ARM64 uses wN for 32-bit or smaller, xN for 64-bit
+	if size <= 4 {
+		return fmt.Sprintf("w%d", regNum)
+	}
+	return fmt.Sprintf("x%d", regNum)
 }
 
 // loadByType2 returns an opcode that can load consecutive memory locations into 2 registers with type t.
@@ -1860,6 +1884,38 @@ func ssaGenValue(s *ssagen.State, v *ssa.Value) {
 		if base.Debug.Nil != 0 && v.Pos.Line() > 1 { // v.Line==1 in generated wrappers
 			base.WarnfAt(v.Pos, "generated nil check")
 		}
+	case ssa.OpARM64LoweredUSDTProbe:
+		p := s.Prog(arm64.AWORD)
+		p.To.Type = obj.TYPE_CONST
+		p.To.Offset = 0xD503201F
+		probeInfo := v.Aux.(*ssa.USDTProbeInfo)
+		s.FuncInfo().AddUSDTProbe(p, probeInfo.Provider, probeInfo.Name, "")
+	case ssa.OpARM64LoweredUSDTProbe1, ssa.OpARM64LoweredUSDTProbe2, ssa.OpARM64LoweredUSDTProbe3, ssa.OpARM64LoweredUSDTProbe4:
+		p := s.Prog(arm64.AWORD)
+		p.To.Type = obj.TYPE_CONST
+		p.To.Offset = 0xD503201F
+
+		probeInfo := v.Aux.(*ssa.USDTProbeInfo)
+
+		// SystemTap SDT argdesc: "[size]@[reg]" per arg, space-separated.
+		// Negative size = signed. ARM64 uses xN/wN notation.
+		var argdesc string
+		numArgs := len(probeInfo.ArgTypes)
+		for i := 0; i < numArgs; i++ {
+			if i > 0 {
+				argdesc += " "
+			}
+			argType := probeInfo.ArgTypes[i]
+			reg := v.Args[i].Reg()
+			size := int(argType.Size)
+			if argType.Signed {
+				size = -size
+			}
+			gasReg := arm64RegToGAS(reg, argType.Size)
+			argdesc += fmt.Sprintf("%d@%s", size, gasReg)
+		}
+
+		s.FuncInfo().AddUSDTProbe(p, probeInfo.Provider, probeInfo.Name, argdesc)
 	case ssa.OpARM64Equal,
 		ssa.OpARM64NotEqual,
 		ssa.OpARM64LessThan,

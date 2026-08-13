@@ -1,0 +1,6 @@
+pkg runtime/trace/usdt, func Probe(provider string, name string)
+pkg runtime/trace/usdt, func Probe1[T USDTArg](provider string, name string, arg1 T)
+pkg runtime/trace/usdt, func Probe2[T1, T2 USDTArg](provider string, name string, arg1 T1, arg2 T2)
+pkg runtime/trace/usdt, func Probe3[T1, T2, T3 USDTArg](provider string, name string, arg1 T1, arg2 T2, arg3 T3)
+pkg runtime/trace/usdt, func Probe4[T1, T2, T3, T4 USDTArg](provider string, name string, arg1 T1, arg2 T2, arg3 T3, arg4 T4)
+pkg runtime/trace/usdt, type USDTArg interface

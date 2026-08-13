@@ -6,8 +6,10 @@ package ssagen
 
 import (
 	"fmt"
+	"go/constant"
 	"internal/abi"
 	"internal/buildcfg"
+	"strings"
 
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
@@ -19,6 +21,27 @@ import (
 )
 
 var intrinsics intrinsicBuilders
+
+// usdtArgTypeFromType converts a Go type to a USDTArgType for argdesc generation.
+// This determines the size and signedness for the SystemTap SDT argument descriptor.
+func usdtArgTypeFromType(t *types.Type) ssa.USDTArgType {
+	if t == nil {
+		return ssa.USDTArgType{Size: 8, Signed: false}
+	}
+
+	size := int8(t.Size())
+	if size > 8 {
+		size = 8 // Cap at 64-bit
+	}
+
+	signed := false
+	switch t.Kind() {
+	case types.TINT, types.TINT8, types.TINT16, types.TINT32, types.TINT64:
+		signed = true
+	}
+
+	return ssa.USDTArgType{Size: size, Signed: signed}
+}
 
 // An intrinsicBuilder converts a call node n into an ssa value that
 // implements that call as an intrinsic. args is a list of arguments to the func.
@@ -166,6 +189,158 @@ func initIntrinsics(cfg *intrinsicBuildConfig) {
 			return nil
 		},
 		sys.ARM64, sys.Loong64, sys.MIPS, sys.MIPS64, sys.PPC64, sys.RISCV64)
+
+	/******** runtime/trace/usdt ********/
+
+	// usdtSupported reports whether USDT probes are emitted for the current
+	// target. Probes are only meaningful on Linux ELF — the linker emits
+	// .note.stapsdt only for Hlinux. Without this gate, darwin/windows
+	// binaries carry stray NOP bytes with no metadata (D7).
+	usdtSupported := func() bool {
+		return buildcfg.GOOS == "linux"
+	}
+
+	add("runtime/trace/usdt", "Probe",
+		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+			if !usdtSupported() {
+				return nil
+			}
+			// Validate that both provider and name are compile-time string literals
+			if len(n.Args) != 2 {
+				s.Fatalf("usdt.Probe requires exactly 2 arguments")
+			}
+
+			// Check provider is a string literal
+			if !ir.IsConst(n.Args[0], constant.String) {
+				base.ErrorfAt(n.Pos(), 0, "usdt.Probe: provider must be a compile-time string literal")
+				return nil
+			}
+			provider := ir.StringVal(n.Args[0])
+
+			// Check name is a string literal
+			if !ir.IsConst(n.Args[1], constant.String) {
+				base.ErrorfAt(n.Pos(), 0, "usdt.Probe: name must be a compile-time string literal")
+				return nil
+			}
+			name := ir.StringVal(n.Args[1])
+
+			// Create probe info
+			probeInfo := &ssa.USDTProbeInfo{
+				Provider: provider,
+				Name:     name,
+			}
+
+			// Generate USDTProbe op with metadata
+			s.vars[memVar] = s.newValue1A(ssa.OpUSDTProbe, types.TypeMem, probeInfo, s.mem())
+			return nil
+		},
+		sys.ArchAMD64, sys.ArchARM64)
+
+	// usdtValidateAndGetProbeInfo validates provider/name are literals and builds USDTProbeInfo.
+	// For generic functions (Probe1-4), Go passes a dictionary pointer as the first hidden argument,
+	// so the layout is: [dict, provider, name, arg1, arg2, ...].
+	// Returns nil if validation fails, in which case the intrinsic should be skipped and the
+	// normal function call should proceed.
+	usdtValidateAndGetProbeInfo := func(s *state, n *ir.CallExpr, args []*ssa.Value, numArgs int) *ssa.USDTProbeInfo {
+		// For generic functions, there's an extra dictionary arg at the front
+		// Expected: dict + provider + name + numArgs data values = 3 + numArgs
+		expectedArgs := 3 + numArgs
+		if len(n.Args) != expectedArgs {
+			// Wrong number of args - skip intrinsic, let normal call proceed
+			return nil
+		}
+
+		// Skip dictionary arg (index 0), provider is at index 1
+		if !ir.IsConst(n.Args[1], constant.String) {
+			// Provider is not a literal - skip intrinsic, let normal call proceed
+			return nil
+		}
+		provider := ir.StringVal(n.Args[1])
+
+		// Name is at index 2
+		if !ir.IsConst(n.Args[2], constant.String) {
+			// Name is not a literal - skip intrinsic, let normal call proceed
+			return nil
+		}
+		name := ir.StringVal(n.Args[2])
+
+		// Build ArgTypes from the data argument SSA values (starting at index 3, after dict, provider, name)
+		argTypes := make([]ssa.USDTArgType, numArgs)
+		for i := 0; i < numArgs; i++ {
+			argTypes[i] = usdtArgTypeFromType(args[3+i].Type)
+		}
+
+		return &ssa.USDTProbeInfo{
+			Provider: provider,
+			Name:     name,
+			ArgTypes: argTypes,
+		}
+	}
+
+	add("runtime/trace/usdt", "Probe1",
+		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+			if !usdtSupported() {
+				return nil
+			}
+			probeInfo := usdtValidateAndGetProbeInfo(s, n, args, 1)
+			if probeInfo == nil {
+				// Validation failed (non-literal args). The call is a no-op;
+				// returning without touching memVar is a complete no-op.
+				return nil
+			}
+			// args[3] is the first data argument (after dict, provider, name at indices 0, 1, 2)
+			s.vars[memVar] = s.newValue2A(ssa.OpUSDTProbe1, types.TypeMem, probeInfo, args[3], s.mem())
+			return nil
+		},
+		sys.ArchAMD64, sys.ArchARM64)
+
+	add("runtime/trace/usdt", "Probe2",
+		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+			if !usdtSupported() {
+				return nil
+			}
+			probeInfo := usdtValidateAndGetProbeInfo(s, n, args, 2)
+			if probeInfo == nil {
+				return nil
+			}
+			// args[3], args[4] are the data arguments
+			s.vars[memVar] = s.newValue3A(ssa.OpUSDTProbe2, types.TypeMem, probeInfo, args[3], args[4], s.mem())
+			return nil
+		},
+		sys.ArchAMD64, sys.ArchARM64)
+
+	add("runtime/trace/usdt", "Probe3",
+		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+			if !usdtSupported() {
+				return nil
+			}
+			probeInfo := usdtValidateAndGetProbeInfo(s, n, args, 3)
+			if probeInfo == nil {
+				return nil
+			}
+			// args[3], args[4], args[5] are the data arguments
+			s.vars[memVar] = s.newValue4A(ssa.OpUSDTProbe3, types.TypeMem, probeInfo, args[3], args[4], args[5], s.mem())
+			return nil
+		},
+		sys.ArchAMD64, sys.ArchARM64)
+
+	add("runtime/trace/usdt", "Probe4",
+		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+			if !usdtSupported() {
+				return nil
+			}
+			probeInfo := usdtValidateAndGetProbeInfo(s, n, args, 4)
+			if probeInfo == nil {
+				return nil
+			}
+			// For 5 arguments (4 values + mem), create value and add args
+			// args[3], args[4], args[5], args[6] are the data arguments
+			v := s.curBlock.NewValue0A(s.peekPos(), ssa.OpUSDTProbe4, types.TypeMem, probeInfo)
+			v.AddArg5(args[3], args[4], args[5], args[6], s.mem())
+			s.vars[memVar] = v
+			return nil
+		},
+		sys.ArchAMD64, sys.ArchARM64)
 
 	/******** internal/runtime/sys ********/
 	add("internal/runtime/sys", "GetCallerPC",
@@ -2406,6 +2581,13 @@ func findIntrinsic(sym *types.Sym) intrinsicBuilder {
 	}
 
 	fn := sym.Name
+	// Strip type parameters from generic function names for intrinsic lookup.
+	// For example, "Probe1[int32]" or "Probe1[go.shape.int32]" becomes "Probe1".
+	// We only strip if there are brackets - the template "Probe1" without brackets
+	// will still match, which is intentional for non-generic intrinsics like "Probe".
+	if idx := strings.IndexByte(fn, '['); idx >= 0 {
+		fn = fn[:idx]
+	}
 	if ssa.IntrinsicsDisable {
 		if pkg == "internal/runtime/sys" && (fn == "GetCallerPC" || fn == "GetCallerSP" || fn == "GetClosurePtr") ||
 			pkg == simdPackage {

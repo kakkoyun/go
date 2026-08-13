@@ -437,6 +437,19 @@ func Main(arch *sys.Arch, theArch Arch) {
 	symGroupType := ctxt.symtab(pclnState)
 	bench.Start("dodata")
 	ctxt.dodata(symGroupType)
+
+	// D1: Grow HEADR and FlagTextAddr to accommodate USDT notes before
+	// address() computes symbol values and segment layout. Without this,
+	// notes in the 4096-byte ELFRESERVE break linking at ~28 probes.
+	// collectUSDTProbes is called here for size only (addresses are not
+	// yet final); it is called again in asmbElf for the real addresses.
+	collectUSDTProbes(ctxt)
+	if noteSize := int64(elfstapsdtsize()); noteSize > 0 {
+		noteSize = Rnd(noteSize, int64(*FlagRound))
+		HEADR += int32(noteSize)
+		*FlagTextAddr += noteSize
+	}
+
 	bench.Start("address")
 	order := ctxt.address()
 	bench.Start("dwarfcompress")

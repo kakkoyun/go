@@ -766,6 +766,11 @@ const (
 	OpAMD64LoweredGetCallerPC
 	OpAMD64LoweredGetCallerSP
 	OpAMD64LoweredNilCheck
+	OpAMD64LoweredUSDTProbe
+	OpAMD64LoweredUSDTProbe1
+	OpAMD64LoweredUSDTProbe2
+	OpAMD64LoweredUSDTProbe3
+	OpAMD64LoweredUSDTProbe4
 	OpAMD64LoweredWB
 	OpAMD64LoweredHasCPUFeature
 	OpAMD64LoweredPanicBoundsRR
@@ -4633,6 +4638,11 @@ const (
 	OpARM64CALLclosure
 	OpARM64CALLinter
 	OpARM64LoweredNilCheck
+	OpARM64LoweredUSDTProbe
+	OpARM64LoweredUSDTProbe1
+	OpARM64LoweredUSDTProbe2
+	OpARM64LoweredUSDTProbe3
+	OpARM64LoweredUSDTProbe4
 	OpARM64LoweredMemEq
 	OpARM64Equal
 	OpARM64NotEqual
@@ -6876,6 +6886,11 @@ const (
 	OpPubBarrier
 	OpClobber
 	OpClobberReg
+	OpUSDTProbe
+	OpUSDTProbe1
+	OpUSDTProbe2
+	OpUSDTProbe3
+	OpUSDTProbe4
 	OpPrefetchCache
 	OpPrefetchCacheStreamed
 	OpMemEq
@@ -20336,6 +20351,63 @@ var opcodeTable = [...]opInfo{
 		reg: regInfo{
 			inputs: []inputInfo{
 				{0, regMask{v1: 49151, v2: 0}}, // AX CX DX BX SP BP SI DI R8 R9 R10 R11 R12 R13 R15
+			},
+		},
+	},
+	{
+		name:           "LoweredUSDTProbe",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         1,
+		hasSideEffects: true,
+		reg:            regInfo{},
+	},
+	{
+		name:           "LoweredUSDTProbe1",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         2,
+		hasSideEffects: true,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, regMask{v1: 49135, v2: 0}}, // AX CX DX BX BP SI DI R8 R9 R10 R11 R12 R13 R15
+			},
+		},
+	},
+	{
+		name:           "LoweredUSDTProbe2",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         3,
+		hasSideEffects: true,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, regMask{v1: 49135, v2: 0}}, // AX CX DX BX BP SI DI R8 R9 R10 R11 R12 R13 R15
+				{1, regMask{v1: 49135, v2: 0}}, // AX CX DX BX BP SI DI R8 R9 R10 R11 R12 R13 R15
+			},
+		},
+	},
+	{
+		name:           "LoweredUSDTProbe3",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         4,
+		hasSideEffects: true,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, regMask{v1: 49135, v2: 0}}, // AX CX DX BX BP SI DI R8 R9 R10 R11 R12 R13 R15
+				{1, regMask{v1: 49135, v2: 0}}, // AX CX DX BX BP SI DI R8 R9 R10 R11 R12 R13 R15
+				{2, regMask{v1: 49135, v2: 0}}, // AX CX DX BX BP SI DI R8 R9 R10 R11 R12 R13 R15
+			},
+		},
+	},
+	{
+		name:           "LoweredUSDTProbe4",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         5,
+		hasSideEffects: true,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, regMask{v1: 49135, v2: 0}}, // AX CX DX BX BP SI DI R8 R9 R10 R11 R12 R13 R15
+				{1, regMask{v1: 49135, v2: 0}}, // AX CX DX BX BP SI DI R8 R9 R10 R11 R12 R13 R15
+				{2, regMask{v1: 49135, v2: 0}}, // AX CX DX BX BP SI DI R8 R9 R10 R11 R12 R13 R15
+				{3, regMask{v1: 49135, v2: 0}}, // AX CX DX BX BP SI DI R8 R9 R10 R11 R12 R13 R15
 			},
 		},
 	},
@@ -79806,6 +79878,63 @@ var opcodeTable = [...]opInfo{
 		},
 	},
 	{
+		name:           "LoweredUSDTProbe",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         1,
+		hasSideEffects: true,
+		reg:            regInfo{},
+	},
+	{
+		name:           "LoweredUSDTProbe1",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         2,
+		hasSideEffects: true,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, regMask{v1: 335544319, v2: 0}}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+			},
+		},
+	},
+	{
+		name:           "LoweredUSDTProbe2",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         3,
+		hasSideEffects: true,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, regMask{v1: 335544319, v2: 0}}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+				{1, regMask{v1: 335544319, v2: 0}}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+			},
+		},
+	},
+	{
+		name:           "LoweredUSDTProbe3",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         4,
+		hasSideEffects: true,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, regMask{v1: 335544319, v2: 0}}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+				{1, regMask{v1: 335544319, v2: 0}}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+				{2, regMask{v1: 335544319, v2: 0}}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+			},
+		},
+	},
+	{
+		name:           "LoweredUSDTProbe4",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         5,
+		hasSideEffects: true,
+		reg: regInfo{
+			inputs: []inputInfo{
+				{0, regMask{v1: 335544319, v2: 0}}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+				{1, regMask{v1: 335544319, v2: 0}}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+				{2, regMask{v1: 335544319, v2: 0}}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+				{3, regMask{v1: 335544319, v2: 0}}, // R0 R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 R17 R19 R20 R21 R22 R23 R24 R25 R26 R30
+			},
+		},
+	},
+	{
 		name:           "LoweredMemEq",
 		argLen:         4,
 		clobberFlags:   true,
@@ -108277,6 +108406,41 @@ var opcodeTable = [...]opInfo{
 		name:    "ClobberReg",
 		argLen:  0,
 		generic: true,
+	},
+	{
+		name:           "USDTProbe",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         1,
+		hasSideEffects: true,
+		generic:        true,
+	},
+	{
+		name:           "USDTProbe1",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         2,
+		hasSideEffects: true,
+		generic:        true,
+	},
+	{
+		name:           "USDTProbe2",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         3,
+		hasSideEffects: true,
+		generic:        true,
+	},
+	{
+		name:           "USDTProbe3",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         4,
+		hasSideEffects: true,
+		generic:        true,
+	},
+	{
+		name:           "USDTProbe4",
+		auxType:        auxUSDTProbeInfo,
+		argLen:         5,
+		hasSideEffects: true,
+		generic:        true,
 	},
 	{
 		name:           "PrefetchCache",

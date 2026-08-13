@@ -33,10 +33,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	_ "unsafe"
+	"unsafe"
 
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http/httpproxy"
+	"runtime/trace/usdt"
 )
 
 // DefaultTransport is the default implementation of [Transport] and is
@@ -2749,6 +2750,7 @@ func (pc *persistConn) readResponse(rc requestAndChan, trace *httptrace.ClientTr
 	}
 
 	resp.TLS = pc.tlsState
+	usdt.Probe1("net_http", "client_response_received", int32(resp.StatusCode))
 	return
 }
 
@@ -2829,6 +2831,10 @@ func (pc *persistConn) writeLoop() {
 		select {
 		case wr := <-pc.writech:
 			startBytesWritten := pc.nwrite
+			urlStr := wr.req.Request.URL.String()
+			usdt.Probe4("net_http", "client_request_start",
+				unsafe.Pointer(unsafe.StringData(wr.req.Request.Method)), int64(len(wr.req.Request.Method)),
+				unsafe.Pointer(unsafe.StringData(urlStr)), int64(len(urlStr)))
 			err := wr.req.Request.write(pc.bw, pc.isProxy, wr.req.extra, pc.waitForContinue(wr.continueCh))
 			if bre, ok := err.(requestBodyReadError); ok {
 				err = bre.error

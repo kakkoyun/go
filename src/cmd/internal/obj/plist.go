@@ -169,6 +169,14 @@ func Flushplist(ctxt *Link, plist *Plist, newprog ProgAlloc) {
 		if ctxt.Errors > 0 {
 			continue
 		}
+		// Capture USDT probe PC offsets now that Assemble has computed them.
+		// This must happen before pp.Free() clears the Prog cache.
+		fn := s.Func()
+		if fn != nil {
+			for i := range fn.USDTProbes {
+				fn.USDTProbes[i].Offset = fn.USDTProbes[i].P.Pc
+			}
+		}
 		linkpcln(ctxt, s)
 		ctxt.populateDWARF(plist.Curfn, s)
 		if ctxt.Headtype == objabi.Hwindows && ctxt.Arch.SEH != nil {

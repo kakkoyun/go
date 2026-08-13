@@ -102,6 +102,7 @@ import (
 	"internal/poll"
 	"io"
 	"os"
+	"runtime/trace/usdt"
 	"sync"
 	"syscall"
 	"time"
@@ -217,6 +218,7 @@ func (c *conn) Close() error {
 	if !c.ok() {
 		return syscall.EINVAL
 	}
+	usdt.Probe("net", "conn_close")
 	err := c.fd.Close()
 	if err != nil {
 		err = &OpError{Op: "close", Net: c.fd.net, Source: c.fd.laddr, Addr: c.fd.raddr, Err: err}

@@ -119,6 +119,29 @@ func (a *AuxNameOffset) FrameOffset() int64 {
 	return a.Name.FrameOffset() + a.Offset
 }
 
+// USDTProbeInfo holds metadata for a USDT (Userland Statically Defined Tracing) probe.
+// This is passed as the Aux field of USDTProbe SSA ops.
+type USDTProbeInfo struct {
+	Provider string         // Provider name (e.g., "myapp")
+	Name     string         // Probe name (e.g., "request_start")
+	ArgTypes []USDTArgType  // Types of probe arguments (for argdesc generation)
+}
+
+// USDTArgType describes the type of a USDT probe argument.
+// This is used to generate the argdesc string in the .note.stapsdt section.
+type USDTArgType struct {
+	Size   int8 // Size in bytes: 1, 2, 4, or 8
+	Signed bool // True for signed integers, false for unsigned/pointers
+}
+
+func (u *USDTProbeInfo) CanBeAnSSAAux() {}
+func (u *USDTProbeInfo) String() string {
+	if len(u.ArgTypes) == 0 {
+		return fmt.Sprintf("usdt:%s:%s", u.Provider, u.Name)
+	}
+	return fmt.Sprintf("usdt:%s:%s[%d args]", u.Provider, u.Name, len(u.ArgTypes))
+}
+
 type AuxCall struct {
 	Fn      *obj.LSym
 	reg     *regInfo // regInfo for this call
@@ -385,6 +408,9 @@ const (
 	auxS390XCCMask            // aux is a s390x 4-bit condition code mask
 	auxS390XCCMaskInt8        // aux is a s390x 4-bit condition code mask, auxInt is an int8 immediate
 	auxS390XCCMaskUint8       // aux is a s390x 4-bit condition code mask, auxInt is a uint8 immediate
+
+	// USDT probe metadata
+	auxUSDTProbeInfo // aux is a *USDTProbeInfo containing provider and name strings
 )
 
 // A SymEffect describes the effect that an SSA Value has on the variable

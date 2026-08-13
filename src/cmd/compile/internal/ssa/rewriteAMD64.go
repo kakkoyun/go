@@ -7099,6 +7099,21 @@ func rewriteValueAMD64(v *Value) bool {
 	case OpTruncToUint8Uint64x8:
 		v.Op = OpAMD64VPMOVQB128_512
 		return true
+	case OpUSDTProbe:
+		v.Op = OpAMD64LoweredUSDTProbe
+		return true
+	case OpUSDTProbe1:
+		v.Op = OpAMD64LoweredUSDTProbe1
+		return true
+	case OpUSDTProbe2:
+		v.Op = OpAMD64LoweredUSDTProbe2
+		return true
+	case OpUSDTProbe3:
+		v.Op = OpAMD64LoweredUSDTProbe3
+		return true
+	case OpUSDTProbe4:
+		v.Op = OpAMD64LoweredUSDTProbe4
+		return true
 	case OpWB:
 		v.Op = OpAMD64LoweredWB
 		return true

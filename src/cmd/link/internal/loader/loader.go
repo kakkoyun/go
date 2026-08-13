@@ -2178,6 +2178,22 @@ func (l *Loader) FuncInfo(i Sym) FuncInfo {
 	return FuncInfo{}
 }
 
+// USDTProbes returns USDT probe info for a symbol if it has any.
+// Returns nil if the symbol has no USDT probes.
+func (l *Loader) USDTProbes(i Sym) *goobj.USDTProbeInfo {
+	r, auxs := l.auxs(i)
+	for j := range auxs {
+		a := &auxs[j]
+		if a.Type() == goobj.AuxUSDTProbes {
+			b := r.Data(a.Sym().SymIdx)
+			var info goobj.USDTProbeInfo
+			info.Read(b)
+			return &info
+		}
+	}
+	return nil
+}
+
 // Preload a package: adds autolib.
 // Does not add defined package or non-packaged symbols to the symbol table.
 // These are done in LoadSyms.

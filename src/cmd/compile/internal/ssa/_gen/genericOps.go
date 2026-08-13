@@ -686,6 +686,19 @@ var genericOps = []opData{
 	{name: "Clobber", argLength: 0, typ: "Void", aux: "SymOff", symEffect: "None"}, // write an invalid pointer value to the given pointer slot of a stack variable
 	{name: "ClobberReg", argLength: 0, typ: "Void"},                                // clobber a register
 
+	// USDT (Userland Statically Defined Tracing) probe
+	// Emits a NOP instruction with metadata for .note.stapsdt ELF section.
+	// Tracers like bpftrace/SystemTap can attach by patching NOP to breakpoint.
+	// aux is *USDTProbeInfo containing provider and name strings.
+	// USDTProbe: arg0=mem, returns mem. Must have side effects to prevent DCE.
+	// USDTProbe1-4: arg0..argN=values to pass as probe arguments, last arg=mem.
+	// The aux field contains USDTProbeInfo with ArgTypes describing each argument.
+	{name: "USDTProbe", argLength: 1, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true},
+	{name: "USDTProbe1", argLength: 2, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true}, // arg0=value, arg1=mem
+	{name: "USDTProbe2", argLength: 3, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true}, // arg0,arg1=values, arg2=mem
+	{name: "USDTProbe3", argLength: 4, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true}, // arg0,arg1,arg2=values, arg3=mem
+	{name: "USDTProbe4", argLength: 5, typ: "Mem", aux: "USDTProbeInfo", hasSideEffects: true}, // arg0..arg3=values, arg4=mem
+
 	// Prefetch instruction
 	{name: "PrefetchCache", argLength: 2, hasSideEffects: true},         // Do prefetch arg0 to cache. arg0=addr, arg1=memory.
 	{name: "PrefetchCacheStreamed", argLength: 2, hasSideEffects: true}, // Do non-temporal or streamed prefetch arg0 to cache. arg0=addr, arg1=memory.
