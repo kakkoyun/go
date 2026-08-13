@@ -383,12 +383,6 @@ var depsRules = `
 unsafe
 	< runtime/trace/usdt;
 
-# databases
-	FMT
-	< database/sql/internal
-	< database/sql/driver;
-
-	database/sql/driver, math/rand/v2, runtime/trace/usdt < database/sql;
 	# images
 	FMT, compress/lzw, compress/zlib
 	< image/color
@@ -610,7 +604,7 @@ unsafe
 	< database/sql/internal
 	< database/sql/driver;
 
-	database/sql/driver, math/rand/v2 < database/sql;
+	database/sql/driver, math/rand/v2, runtime/trace/usdt < database/sql;
 
 	# TLS, Prince of Dependencies.
 
