@@ -1885,26 +1885,20 @@ func ssaGenValue(s *ssagen.State, v *ssa.Value) {
 			base.WarnfAt(v.Pos, "generated nil check")
 		}
 	case ssa.OpARM64LoweredUSDTProbe:
-		// Emit a 4-byte NOP for USDT probe.
-		// ARM64 NOP is encoded as HINT #0 = 0xD503201F.
-		// Tracers (bpftrace, SystemTap) will patch this to BRK at runtime.
 		p := s.Prog(arm64.AWORD)
 		p.To.Type = obj.TYPE_CONST
-		p.To.Offset = 0xD503201F // ARM64 NOP encoding
-		// Record probe location and metadata for linker
+		p.To.Offset = 0xD503201F
 		probeInfo := v.Aux.(*ssa.USDTProbeInfo)
 		s.FuncInfo().AddUSDTProbe(p, probeInfo.Provider, probeInfo.Name, "")
 	case ssa.OpARM64LoweredUSDTProbe1, ssa.OpARM64LoweredUSDTProbe2, ssa.OpARM64LoweredUSDTProbe3, ssa.OpARM64LoweredUSDTProbe4:
-		// Emit a 4-byte NOP for USDT probe with arguments.
 		p := s.Prog(arm64.AWORD)
 		p.To.Type = obj.TYPE_CONST
-		p.To.Offset = 0xD503201F // ARM64 NOP encoding
+		p.To.Offset = 0xD503201F
 
 		probeInfo := v.Aux.(*ssa.USDTProbeInfo)
 
-		// Build argdesc string from allocated registers and argument types.
-		// ARM64 uses xN (64-bit) or wN (32-bit) notation.
-		// Format: "[size]@[reg]" for each argument, space-separated.
+		// SystemTap SDT argdesc: "[size]@[reg]" per arg, space-separated.
+		// Negative size = signed. ARM64 uses xN/wN notation.
 		var argdesc string
 		numArgs := len(probeInfo.ArgTypes)
 		for i := 0; i < numArgs; i++ {

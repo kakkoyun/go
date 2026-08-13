@@ -191,8 +191,20 @@ func initIntrinsics(cfg *intrinsicBuildConfig) {
 		sys.ARM64, sys.Loong64, sys.MIPS, sys.MIPS64, sys.PPC64, sys.RISCV64)
 
 	/******** runtime/trace/usdt ********/
+
+	// usdtSupported reports whether USDT probes are emitted for the current
+	// target. Probes are only meaningful on Linux ELF — the linker emits
+	// .note.stapsdt only for Hlinux. Without this gate, darwin/windows
+	// binaries carry stray NOP bytes with no metadata (D7).
+	usdtSupported := func() bool {
+		return buildcfg.GOOS == "linux"
+	}
+
 	add("runtime/trace/usdt", "Probe",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+			if !usdtSupported() {
+				return nil
+			}
 			// Validate that both provider and name are compile-time string literals
 			if len(n.Args) != 2 {
 				s.Fatalf("usdt.Probe requires exactly 2 arguments")
@@ -267,12 +279,13 @@ func initIntrinsics(cfg *intrinsicBuildConfig) {
 
 	add("runtime/trace/usdt", "Probe1",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+			if !usdtSupported() {
+				return nil
+			}
 			probeInfo := usdtValidateAndGetProbeInfo(s, n, args, 1)
 			if probeInfo == nil {
-				// Validation failed (non-literal args, e.g., from GenIntrinsicBody).
-				// Generate a simple no-op without probe metadata.
-				s.vars[memVar] = s.newValue1A(ssa.OpUSDTProbe, types.TypeMem,
-					&ssa.USDTProbeInfo{Provider: "_fallback", Name: "_fallback"}, s.mem())
+				// Validation failed (non-literal args). The call is a no-op;
+				// returning without touching memVar is a complete no-op.
 				return nil
 			}
 			// args[3] is the first data argument (after dict, provider, name at indices 0, 1, 2)
@@ -283,11 +296,11 @@ func initIntrinsics(cfg *intrinsicBuildConfig) {
 
 	add("runtime/trace/usdt", "Probe2",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+			if !usdtSupported() {
+				return nil
+			}
 			probeInfo := usdtValidateAndGetProbeInfo(s, n, args, 2)
 			if probeInfo == nil {
-				// Validation failed - generate a simple no-op
-				s.vars[memVar] = s.newValue1A(ssa.OpUSDTProbe, types.TypeMem,
-					&ssa.USDTProbeInfo{Provider: "_fallback", Name: "_fallback"}, s.mem())
 				return nil
 			}
 			// args[3], args[4] are the data arguments
@@ -298,11 +311,11 @@ func initIntrinsics(cfg *intrinsicBuildConfig) {
 
 	add("runtime/trace/usdt", "Probe3",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+			if !usdtSupported() {
+				return nil
+			}
 			probeInfo := usdtValidateAndGetProbeInfo(s, n, args, 3)
 			if probeInfo == nil {
-				// Validation failed - generate a simple no-op
-				s.vars[memVar] = s.newValue1A(ssa.OpUSDTProbe, types.TypeMem,
-					&ssa.USDTProbeInfo{Provider: "_fallback", Name: "_fallback"}, s.mem())
 				return nil
 			}
 			// args[3], args[4], args[5] are the data arguments
@@ -313,11 +326,11 @@ func initIntrinsics(cfg *intrinsicBuildConfig) {
 
 	add("runtime/trace/usdt", "Probe4",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+			if !usdtSupported() {
+				return nil
+			}
 			probeInfo := usdtValidateAndGetProbeInfo(s, n, args, 4)
 			if probeInfo == nil {
-				// Validation failed - generate a simple no-op
-				s.vars[memVar] = s.newValue1A(ssa.OpUSDTProbe, types.TypeMem,
-					&ssa.USDTProbeInfo{Provider: "_fallback", Name: "_fallback"}, s.mem())
 				return nil
 			}
 			// For 5 arguments (4 values + mem), create value and add args

@@ -1746,26 +1746,20 @@ func ssaGenValue(s *ssagen.State, v *ssa.Value) {
 			base.WarnfAt(v.Pos, "generated nil check")
 		}
 	case ssa.OpAMD64LoweredUSDTProbe:
-		// Emit a single-byte NOP (0x90) for USDT probe.
-		// Tracers (bpftrace, SystemTap) will patch this NOP to INT3 (0xCC) at runtime.
-		// Using ABYTE with 0x90 emits an actual byte, unlike obj.ANOP which is a pseudo-op.
 		p := s.Prog(x86.ABYTE)
 		p.From.Type = obj.TYPE_CONST
-		p.From.Offset = 0x90 // NOP opcode
-		// Record probe location and metadata for linker
+		p.From.Offset = 0x90
 		probeInfo := v.Aux.(*ssa.USDTProbeInfo)
 		s.FuncInfo().AddUSDTProbe(p, probeInfo.Provider, probeInfo.Name, "")
 	case ssa.OpAMD64LoweredUSDTProbe1, ssa.OpAMD64LoweredUSDTProbe2, ssa.OpAMD64LoweredUSDTProbe3, ssa.OpAMD64LoweredUSDTProbe4:
-		// Emit a single-byte NOP (0x90) for USDT probe with arguments.
 		p := s.Prog(x86.ABYTE)
 		p.From.Type = obj.TYPE_CONST
-		p.From.Offset = 0x90 // NOP opcode
+		p.From.Offset = 0x90
 
 		probeInfo := v.Aux.(*ssa.USDTProbeInfo)
 
-		// Build argdesc string from allocated registers and argument types.
-		// Format: "[size]@%[reg]" for each argument, space-separated.
-		// Negative size indicates signed value.
+		// SystemTap SDT argdesc: "[size]@%[reg]" per arg, space-separated.
+		// Negative size = signed.
 		var argdesc string
 		numArgs := len(probeInfo.ArgTypes)
 		for i := 0; i < numArgs; i++ {

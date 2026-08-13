@@ -1013,12 +1013,21 @@ func elfstapsdtsize() int {
 }
 
 // elfstapsdt reserves space for .note.stapsdt section.
+// Pass one size per probe to elfnote so it contributes the 12-byte note
+// headers. elfnote is variadic precisely for multi-note sections (FreeBSD
+// uses it that way). Passing the aggregate size would double-count the
+// per-probe headers (the D2 defect).
 func elfstapsdt(sh *ElfShdr, startva uint64, resoff uint64) int {
-	n := elfstapsdtsize()
-	if n == 0 {
+	if len(usdtProbes) == 0 {
 		return 0
 	}
-	return elfnote(sh, startva, resoff, n)
+	sizes := make([]int, len(usdtProbes))
+	for i, p := range usdtProbes {
+		descSz := 24 + len(p.Provider) + 1 + len(p.Name) + 1 + len(p.ArgDesc) + 1
+		paddedDescSz := int(Rnd(int64(descSz), 4))
+		sizes[i] = 8 + paddedDescSz // "stapsdt\0" name + padded desc (no per-probe header)
+	}
+	return elfnote(sh, startva, resoff, sizes...)
 }
 
 // elfwritestapsdt writes the .note.stapsdt section.
@@ -1041,7 +1050,7 @@ func elfwritestapsdt(out *OutBuf, baseAddr uint64) int {
 
 		// Note header
 		out.Write32(ELF_NOTE_STAPSDT_NAME_SZ) // namesz
-		out.Write32(uint32(paddedDescSz))     // descsz
+		out.Write32(uint32(descSz))           // descsz (true, unpadded — D3 fix)
 		out.Write32(ELF_NOTE_STAPSDT_TYPE)    // type
 		out.Write(ELF_NOTE_STAPSDT_NAME)      // "stapsdt\0"
 
@@ -1855,7 +1864,7 @@ func asmbElf(ctxt *Link) {
 		eh.Machine = uint16(elf.EM_S390)
 	}
 
-	elfreserve := int64(ELFRESERVE)
+	elfreserve := int64(HEADR)
 
 	numtext := int64(0)
 	for _, sect := range Segtext.Sections {

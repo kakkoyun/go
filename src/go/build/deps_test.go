@@ -379,6 +379,16 @@ var depsRules = `
 	go/build/constraint, go/doc, go/parser, internal/buildcfg, internal/goroot, internal/goversion, internal/platform, internal/syslist
 	< go/build;
 
+# USDT probes
+unsafe
+	< runtime/trace/usdt;
+
+# databases
+	FMT
+	< database/sql/internal
+	< database/sql/driver;
+
+	database/sql/driver, math/rand/v2, runtime/trace/usdt < database/sql;
 	# images
 	FMT, compress/lzw, compress/zlib
 	< image/color
@@ -435,8 +445,9 @@ var depsRules = `
 	internal/poll,
 	internal/routebsd,
 	internal/singleflight,
-	net/netip,
+	  net/netip,
 	os,
+	runtime/trace/usdt,
 	sort
 	< net;
 
@@ -618,7 +629,8 @@ var depsRules = `
 	< crypto/hpke;
 
 	CRYPTO-MATH, NET, container/list, encoding/hex, encoding/pem, crypto/hpke,
-	golang.org/x/crypto/chacha20poly1305, crypto/tls/internal/fips140tls
+	golang.org/x/crypto/chacha20poly1305, crypto/tls/internal/fips140tls,
+	runtime/trace/usdt
 	< crypto/x509/internal/macos
 	< crypto/x509/pkix
 	< crypto/x509
@@ -672,7 +684,8 @@ var depsRules = `
 	net/http/internal/testcert,
 	net/http/httptrace,
 	mime/multipart,
-	log
+	log,
+	runtime/trace/usdt
 	< net/http/internal/httpcommon, net/http/internal/httpsfv
 	< net/http/internal/http2
 	< net/http;
