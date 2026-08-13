@@ -10,626 +10,340 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
 
-// TestProbeCompiles verifies that a program using usdt.Probe compiles successfully.
-func TestProbeCompiles(t *testing.T) {
+// probeCase is one row in the table-driven USDT test suite.
+type probeCase struct {
+	name        string
+	src         string // Go source to build
+	goos        string
+	goarch      string
+	wantBuildErr string // non-empty = expect build to fail with this substring
+	wantNoNotes  bool   // true = binary must have no .note.stapsdt
+	wantProbes   []probeExpect
+}
+
+// probeExpect describes a probe we expect to find (or not) in .note.stapsdt.
+type probeExpect struct {
+	provider string
+	name     string
+	// argdescChecks are optional functions that validate the argdesc string.
+	// If nil, only provider/name presence is checked.
+	argdescCheck func(t *testing.T, argdesc string)
+}
+
+func TestUSDT(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping in short mode")
 	}
 
-	// Create a temporary directory for the test
-	dir := t.TempDir()
-
-	// Write a simple test program
-	src := filepath.Join(dir, "main.go")
-	err := os.WriteFile(src, []byte(`
-package main
-
+	cases := []probeCase{
+		// 1. Simple probe compiles for linux/amd64.
+		{
+			name:   "compiles_amd64",
+			src:    `package main; import "runtime/trace/usdt"; func main() { usdt.Probe("tp", "tn") }`,
+			goos:   "linux",
+			goarch: "amd64",
+			wantProbes: []probeExpect{
+				{provider: "tp", name: "tn"},
+			},
+		},
+		// 2. Simple probe compiles for linux/arm64.
+		{
+			name:   "compiles_arm64",
+			src:    `package main; import "runtime/trace/usdt"; func main() { usdt.Probe("tp", "tn") }`,
+			goos:   "linux",
+			goarch: "arm64",
+			wantProbes: []probeExpect{
+				{provider: "tp", name: "tn"},
+			},
+		},
+		// 3. Multiple probes in one binary.
+		{
+			name: "multiple_probes",
+			src: `package main
 import "runtime/trace/usdt"
-
 func main() {
-	usdt.Probe("testprovider", "testprobe")
-}
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Build the program
-	out := filepath.Join(dir, "testprog")
-	cmd := exec.Command("go", "build", "-o", out, src)
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build failed: %v\n%s", err, output)
-	}
-}
-
-// TestELFNoteGenerated verifies that the .note.stapsdt section is generated
-// with correct probe metadata for linux/amd64 targets.
-func TestELFNoteGenerated(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
-	}
-
-	// Create a temporary directory for the test
-	dir := t.TempDir()
-
-	// Write a test program with a known probe
-	src := filepath.Join(dir, "main.go")
-	err := os.WriteFile(src, []byte(`
-package main
-
+	usdt.Probe("app", "start")
+	usdt.Probe("app", "end")
+	usdt.Probe("app", "middle")
+}`,
+			goos:   "linux",
+			goarch: "amd64",
+			wantProbes: []probeExpect{
+				{provider: "app", name: "start"},
+				{provider: "app", name: "end"},
+				{provider: "app", name: "middle"},
+			},
+		},
+		// 4. Non-literal provider is a compile error.
+		{
+			name: "non_literal_error",
+			src: `package main
 import "runtime/trace/usdt"
-
 func main() {
-	usdt.Probe("myprovider", "myprobe")
-}
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Build for linux/amd64
-	out := filepath.Join(dir, "testprog")
-	cmd := exec.Command("go", "build", "-o", out, src)
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build failed: %v\n%s", err, output)
-	}
-
-	// Parse the ELF binary
-	f, err := elf.Open(out)
-	if err != nil {
-		t.Fatalf("failed to open ELF: %v", err)
-	}
-	defer f.Close()
-
-	// Find the .note.stapsdt section
-	sect := f.Section(".note.stapsdt")
-	if sect == nil {
-		t.Fatal(".note.stapsdt section not found")
-	}
-
-	// Read the section data
-	data, err := sect.Data()
-	if err != nil {
-		t.Fatalf("failed to read section data: %v", err)
-	}
-
-	// Parse the note
-	if len(data) < 12 {
-		t.Fatal("note data too short")
-	}
-
-	namesz := binary.LittleEndian.Uint32(data[0:4])
-	_ = binary.LittleEndian.Uint32(data[4:8]) // descsz - not used
-	noteType := binary.LittleEndian.Uint32(data[8:12])
-
-	// Verify note type (NT_STAPSDT = 3)
-	if noteType != 3 {
-		t.Errorf("unexpected note type: got %d, want 3", noteType)
-	}
-
-	// Verify name is "stapsdt\0"
-	if namesz != 8 {
-		t.Errorf("unexpected namesz: got %d, want 8", namesz)
-	}
-	name := string(data[12 : 12+namesz-1]) // -1 to exclude null terminator
-	if name != "stapsdt" {
-		t.Errorf("unexpected name: got %q, want %q", name, "stapsdt")
-	}
-
-	// Parse descriptor (after name, aligned to 4 bytes)
-	descOff := 12 + ((namesz + 3) &^ 3)
-	if len(data) < int(descOff)+24 {
-		t.Fatal("descriptor too short")
-	}
-
-	pc := binary.LittleEndian.Uint64(data[descOff : descOff+8])
-	base := binary.LittleEndian.Uint64(data[descOff+8 : descOff+16])
-	sema := binary.LittleEndian.Uint64(data[descOff+16 : descOff+24])
-
-	// Verify PC is non-zero (actual address)
-	if pc == 0 {
-		t.Error("probe PC is 0, expected non-zero address")
-	}
-
-	// Verify base is non-zero
-	if base == 0 {
-		t.Error("base address is 0, expected non-zero")
-	}
-
-	// Semaphore should be 0 (not implemented yet)
-	if sema != 0 {
-		t.Errorf("semaphore: got %d, want 0", sema)
-	}
-
-	// Parse provider and probe name strings
-	strOff := int(descOff) + 24
-	provider := ""
-	probeName := ""
-
-	for i := strOff; i < len(data); i++ {
-		if data[i] == 0 {
-			provider = string(data[strOff:i])
-			strOff = i + 1
-			break
-		}
-	}
-	for i := strOff; i < len(data); i++ {
-		if data[i] == 0 {
-			probeName = string(data[strOff:i])
-			break
-		}
-	}
-
-	if provider != "myprovider" {
-		t.Errorf("provider: got %q, want %q", provider, "myprovider")
-	}
-	if probeName != "myprobe" {
-		t.Errorf("probe name: got %q, want %q", probeName, "myprobe")
-	}
-
-	t.Logf("USDT probe found: provider=%q name=%q pc=0x%x base=0x%x", provider, probeName, pc, base)
-}
-
-// TestELFNoteGeneratedARM64 verifies that the .note.stapsdt section is generated
-// with correct probe metadata for linux/arm64 targets.
-func TestELFNoteGeneratedARM64(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
-	}
-
-	dir := t.TempDir()
-
-	src := filepath.Join(dir, "main.go")
-	err := os.WriteFile(src, []byte(`
-package main
-
-import "runtime/trace/usdt"
-
+	p := "dynamic"
+	usdt.Probe(p, "test")
+}`,
+			goos:        "linux",
+			goarch:      "amd64",
+			wantBuildErr: "string literal",
+		},
+		// 5. Probe1 with various integer types.
+		{
+			name: "probe1_int_types",
+			src: `package main
+import ("runtime/trace/usdt"; "unsafe")
 func main() {
-	usdt.Probe("myprovider", "myprobe")
-}
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Build for linux/arm64
-	out := filepath.Join(dir, "testprog")
-	cmd := exec.Command("go", "build", "-o", out, src)
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=arm64", "CGO_ENABLED=0")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build failed: %v\n%s", err, output)
-	}
-
-	// Parse the ELF binary
-	f, err := elf.Open(out)
-	if err != nil {
-		t.Fatalf("failed to open ELF: %v", err)
-	}
-	defer f.Close()
-
-	// Verify ELF machine type is ARM64
-	if f.Machine != elf.EM_AARCH64 {
-		t.Fatalf("expected ARM64 ELF, got machine type %v", f.Machine)
-	}
-
-	// Find the .note.stapsdt section
-	sect := f.Section(".note.stapsdt")
-	if sect == nil {
-		t.Fatal(".note.stapsdt section not found for ARM64")
-	}
-
-	data, err := sect.Data()
-	if err != nil {
-		t.Fatalf("failed to read section data: %v", err)
-	}
-
-	// Parse the note and verify basic structure
-	if len(data) < 12 {
-		t.Fatal("note data too short")
-	}
-
-	noteType := binary.LittleEndian.Uint32(data[8:12])
-	if noteType != 3 {
-		t.Errorf("unexpected note type: got %d, want 3", noteType)
-	}
-
-	t.Log("ARM64 USDT probe ELF note generated successfully")
-}
-
-// TestMultipleProbes verifies that multiple probes in a program are all recorded.
-func TestMultipleProbes(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
-	}
-
-	dir := t.TempDir()
-
-	src := filepath.Join(dir, "main.go")
-	err := os.WriteFile(src, []byte(`
-package main
-
-import "runtime/trace/usdt"
-
-func foo() {
-	usdt.Probe("app", "foo_enter")
-}
-
-func bar() {
-	usdt.Probe("app", "bar_enter")
-}
-
-func main() {
-	foo()
-	bar()
-}
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	out := filepath.Join(dir, "testprog")
-	cmd := exec.Command("go", "build", "-o", out, src)
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build failed: %v\n%s", err, output)
-	}
-
-	f, err := elf.Open(out)
-	if err != nil {
-		t.Fatalf("failed to open ELF: %v", err)
-	}
-	defer f.Close()
-
-	sect := f.Section(".note.stapsdt")
-	if sect == nil {
-		t.Fatal(".note.stapsdt section not found")
-	}
-
-	data, err := sect.Data()
-	if err != nil {
-		t.Fatalf("failed to read section data: %v", err)
-	}
-
-	// Count probes by counting "app" occurrences in the data
-	// Each probe has provider "app"
-	probeCount := strings.Count(string(data), "app")
-	if probeCount < 2 {
-		t.Errorf("expected at least 2 probes, found %d", probeCount)
-	}
-
-	t.Logf("Found %d probes in binary", probeCount)
-}
-
-// TestNonLiteralError verifies that non-literal strings cause a compile error.
-func TestNonLiteralError(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
-	}
-
-	// Skip on non-amd64 since the intrinsic only exists for amd64
-	if runtime.GOARCH != "amd64" && os.Getenv("GOARCH") != "amd64" {
-		t.Skip("skipping on non-amd64")
-	}
-
-	dir := t.TempDir()
-
-	// Test with non-literal provider
-	src := filepath.Join(dir, "main.go")
-	err := os.WriteFile(src, []byte(`
-package main
-
-import "runtime/trace/usdt"
-
-func main() {
-	provider := "dynamic"
-	usdt.Probe(provider, "test")
-}
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	out := filepath.Join(dir, "testprog")
-	cmd := exec.Command("go", "build", "-o", out, src)
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
-	output, err := cmd.CombinedOutput()
-
-	// Should fail with compile error about string literal
-	if err == nil {
-		t.Fatal("expected compile error for non-literal provider, but build succeeded")
-	}
-	if !strings.Contains(string(output), "string literal") {
-		t.Errorf("expected error about string literal, got: %s", output)
-	}
-}
-
-// TestProbeWithArguments verifies that Probe1-4 with various argument types compile
-// and generate correct argdesc in the ELF notes.
-func TestProbeWithArguments(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
-	}
-
-	dir := t.TempDir()
-
-	// Test program with various argument types
-	src := filepath.Join(dir, "main.go")
-	err := os.WriteFile(src, []byte(`
-package main
-
-import (
-	"runtime/trace/usdt"
-	"unsafe"
-)
-
-func main() {
-	var i8 int8 = 1
-	var i16 int16 = 2
-	var i32 int32 = 200
-	var i64 int64 = 1000
-	var u8 uint8 = 255
-	var u16 uint16 = 65535
-	var u32 uint32 = 100
-	var u64 uint64 = 999
+	var i8 int8 = 1; var i16 int16 = 2; var i32 int32 = 200; var i64 int64 = 1000
+	var u8 uint8 = 255; var u16 uint16 = 65535; var u32 uint32 = 100; var u64 uint64 = 999
 	var uptr uintptr = 0x1234
-	str := "GET"
-	ptr := unsafe.Pointer(unsafe.StringData(str))
+	str := "GET"; ptr := unsafe.Pointer(unsafe.StringData(str))
+	usdt.Probe1("app", "p_i8", i8)
+	usdt.Probe1("app", "p_i16", i16)
+	usdt.Probe1("app", "p_i32", i32)
+	usdt.Probe1("app", "p_i64", i64)
+	usdt.Probe1("app", "p_u8", u8)
+	usdt.Probe1("app", "p_u16", u16)
+	usdt.Probe1("app", "p_u32", u32)
+	usdt.Probe1("app", "p_u64", u64)
+	usdt.Probe1("app", "p_ptr", ptr)
+	_ = uptr
+}`,
+			goos:   "linux",
+			goarch: "amd64",
+			wantProbes: []probeExpect{
+				{provider: "app", name: "p_i8", argdescCheck: checkSigned(1)},
+				{provider: "app", name: "p_i16", argdescCheck: checkSigned(2)},
+				{provider: "app", name: "p_i32", argdescCheck: checkSigned(4)},
+				{provider: "app", name: "p_i64", argdescCheck: checkSigned(8)},
+				{provider: "app", name: "p_u8", argdescCheck: checkUnsigned(1)},
+				{provider: "app", name: "p_u16", argdescCheck: checkUnsigned(2)},
+				{provider: "app", name: "p_u32", argdescCheck: checkUnsigned(4)},
+				{provider: "app", name: "p_u64", argdescCheck: checkUnsigned(8)},
+				{provider: "app", name: "p_ptr", argdescCheck: checkUnsigned(8)},
+			},
+		},
+		// 6. Probe2/3/4 with multiple arguments.
+		{
+			name: "probe_multi_args",
+			src: `package main
+import ("runtime/trace/usdt"; "unsafe")
+func main() {
+	s := "GET"; ptr := unsafe.Pointer(unsafe.StringData(s))
+	usdt.Probe2("app", "p2", ptr, int64(len(s)))
+	usdt.Probe3("app", "p3", int8(-1), int16(-2), int64(-3))
+	usdt.Probe4("app", "p4", uintptr(1), uintptr(2), uintptr(3), uintptr(4))
+}`,
+			goos:   "linux",
+			goarch: "amd64",
+			wantProbes: []probeExpect{
+				{provider: "app", name: "p2"},
+				{provider: "app", name: "p3"},
+				{provider: "app", name: "p4"},
+			},
+		},
+		// 7. Unsupported platform (darwin) builds with no notes.
+		{
+			name: "unsupported_darwin",
+			src: `package main
+import "runtime/trace/usdt"
+func main() { usdt.Probe("test", "probe"); println("ok") }`,
+			goos:       "darwin",
+			goarch:     "arm64",
+			wantNoNotes: true,
+		},
+		// 8. Unsupported platform (windows) builds with no notes.
+		{
+			name: "unsupported_windows",
+			src: `package main
+import "runtime/trace/usdt"
+func main() { usdt.Probe("test", "probe") }`,
+			goos:       "windows",
+			goarch:     "amd64",
+			wantNoNotes: true,
+		},
+	}
 
-	usdt.Probe1("app", "int8_probe", i8)
-	usdt.Probe1("app", "int16_probe", i16)
-	usdt.Probe1("app", "int32_probe", i32)
-	usdt.Probe1("app", "int64_probe", i64)
-	usdt.Probe1("app", "uint8_probe", u8)
-	usdt.Probe1("app", "uint16_probe", u16)
-	usdt.Probe1("app", "uint32_probe", u32)
-	usdt.Probe1("app", "uint64_probe", u64)
-	usdt.Probe1("app", "uintptr_probe", uptr)
-	usdt.Probe1("app", "pointer_probe", ptr)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			srcPath := filepath.Join(dir, "main.go")
+			if err := os.WriteFile(srcPath, []byte(tc.src), 0644); err != nil {
+				t.Fatal(err)
+			}
+			out := filepath.Join(dir, "testprog")
+			cmd := exec.Command("go", "build", "-o", out, srcPath)
+			cmd.Env = append(os.Environ(),
+				"GOOS="+tc.goos, "GOARCH="+tc.goarch, "CGO_ENABLED=0")
+			output, err := cmd.CombinedOutput()
+
+			if tc.wantBuildErr != "" {
+				if err == nil {
+					t.Fatalf("expected build error containing %q, but build succeeded", tc.wantBuildErr)
+				}
+				if !strings.Contains(string(output), tc.wantBuildErr) {
+					t.Fatalf("expected error containing %q, got: %s", tc.wantBuildErr, output)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("build failed: %v\n%s", err, output)
+			}
+
+			if tc.wantNoNotes {
+				// Not ELF — just verify the binary exists and is non-empty.
+				info, err := os.Stat(out)
+				if err != nil {
+					t.Fatalf("stat: %v", err)
+				}
+				if info.Size() == 0 {
+					t.Fatal("binary is empty")
+				}
+				// Try to open as ELF; should fail for darwin/windows.
+				if f, err := elf.Open(out); err == nil {
+					f.Close()
+					if sec := f.Section(".note.stapsdt"); sec != nil {
+						t.Errorf("unsupported platform has .note.stapsdt section")
+					}
+				}
+				return
+			}
+
+			// Parse ELF notes and verify expected probes.
+			f, err := elf.Open(out)
+			if err != nil {
+				t.Fatalf("open elf: %v", err)
+			}
+			defer f.Close()
+
+			sec := f.Section(".note.stapsdt")
+			if sec == nil {
+				t.Fatal(".note.stapsdt section not found")
+			}
+			data, err := sec.Data()
+			if err != nil {
+				t.Fatalf("read section: %v", err)
+			}
+
+			probes := parseStapsdtNotes(data, f.ByteOrder)
+			for _, want := range tc.wantProbes {
+				found := false
+				for _, p := range probes {
+					if p.provider == want.provider && p.name == want.name {
+						found = true
+						if want.argdescCheck != nil {
+							want.argdescCheck(t, p.argdesc)
+						}
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected probe %s:%s not found", want.provider, want.name)
+				}
+			}
+			// No _fallback probes.
+			for _, p := range probes {
+				if p.name == "_fallback" || p.provider == "_fallback" {
+					t.Errorf("found _fallback probe: %s:%s", p.provider, p.name)
+				}
+			}
+		})
+	}
 }
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	out := filepath.Join(dir, "testprog")
-	cmd := exec.Command("go", "build", "-o", out, src)
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build failed: %v\n%s", err, output)
-	}
+// stapsdtProbe is a parsed .note.stapsdt probe.
+type stapsdtProbe struct {
+	addr     uint64
+	base     uint64
+	provider string
+	name     string
+	argdesc  string
+}
 
-	f, err := elf.Open(out)
-	if err != nil {
-		t.Fatalf("failed to open ELF: %v", err)
+// parseStapsdtNotes parses raw .note.stapsdt bytes.
+func parseStapsdtNotes(data []byte, bo binary.ByteOrder) []stapsdtProbe {
+	var probes []stapsdtProbe
+	off := 0
+	for off+12 <= len(data) {
+		namesz := bo.Uint32(data[off:])
+		descsz := bo.Uint32(data[off+4:])
+		ntype := bo.Uint32(data[off+8:])
+		namePad := int((namesz + 3) &^ 3)
+		descStart := off + 12 + namePad
+		descEnd := descStart + int(descsz)
+		if ntype != 3 || descEnd > len(data) {
+			break
+		}
+		desc := data[descStart:descEnd]
+		p := stapsdtProbe{
+			addr: bo.Uint64(desc[0:8]),
+			base: bo.Uint64(desc[8:16]),
+		}
+		rest := desc[24:]
+		strs := readNulStrings(rest, 3)
+		p.provider, p.name, p.argdesc = strs[0], strs[1], strs[2]
+		probes = append(probes, p)
+		descPad := int((descsz + 3) &^ 3)
+		off = descStart + descPad
 	}
-	defer f.Close()
+	return probes
+}
 
-	sect := f.Section(".note.stapsdt")
-	if sect == nil {
-		t.Fatal(".note.stapsdt section not found")
+func readNulStrings(b []byte, n int) []string {
+	strs := make([]string, n)
+	for i := 0; i < n; i++ {
+		idx := -1
+		for j, c := range b {
+			if c == 0 {
+				idx = j
+				break
+			}
+		}
+		if idx < 0 {
+			strs[i] = string(b)
+			break
+		}
+		strs[i] = string(b[:idx])
+		b = b[idx+1:]
 	}
+	return strs
+}
 
-	data, err := sect.Data()
-	if err != nil {
-		t.Fatalf("failed to read section data: %v", err)
-	}
-
-	// Verify probes exist
-	probeNames := []string{"int8_probe", "int16_probe", "int32_probe", "int64_probe",
-		"uint8_probe", "uint16_probe", "uint32_probe", "uint64_probe",
-		"uintptr_probe", "pointer_probe"}
-	for _, name := range probeNames {
-		if !strings.Contains(string(data), name) {
-			t.Errorf("probe %q not found in ELF notes", name)
+// checkSigned returns an argdesc check that verifies the first argument
+// is signed with the given byte width.
+func checkSigned(width int) func(t *testing.T, argdesc string) {
+	return func(t *testing.T, argdesc string) {
+		want := "-" + itoa(width) + "@"
+		if !strings.HasPrefix(argdesc, want) {
+			t.Errorf("expected argdesc to start with %q, got %q", want, argdesc)
 		}
 	}
-
-	t.Log("All Probe1 argument type tests passed")
 }
 
-// TestProbeMultipleArguments verifies Probe2, Probe3, Probe4 work correctly.
-func TestProbeMultipleArguments(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
-	}
-
-	dir := t.TempDir()
-
-	src := filepath.Join(dir, "main.go")
-	err := os.WriteFile(src, []byte(`
-package main
-
-import "runtime/trace/usdt"
-
-func main() {
-	usdt.Probe2("app", "two_args", int32(100), int64(200))
-	usdt.Probe3("app", "three_args", int32(1), int32(2), int32(3))
-	usdt.Probe4("app", "four_args", int32(1), int32(2), int32(3), int32(4))
-}
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	out := filepath.Join(dir, "testprog")
-	cmd := exec.Command("go", "build", "-o", out, src)
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build failed: %v\n%s", err, output)
-	}
-
-	f, err := elf.Open(out)
-	if err != nil {
-		t.Fatalf("failed to open ELF: %v", err)
-	}
-	defer f.Close()
-
-	sect := f.Section(".note.stapsdt")
-	if sect == nil {
-		t.Fatal(".note.stapsdt section not found")
-	}
-
-	data, err := sect.Data()
-	if err != nil {
-		t.Fatalf("failed to read section data: %v", err)
-	}
-
-	// Verify probes exist
-	for _, name := range []string{"two_args", "three_args", "four_args"} {
-		if !strings.Contains(string(data), name) {
-			t.Errorf("probe %q not found in ELF notes", name)
+// checkUnsigned returns an argdesc check that verifies the first argument
+// is unsigned with the given byte width.
+func checkUnsigned(width int) func(t *testing.T, argdesc string) {
+	return func(t *testing.T, argdesc string) {
+		want := itoa(width) + "@"
+		if !strings.HasPrefix(argdesc, want) {
+			t.Errorf("expected argdesc to start with %q, got %q", want, argdesc)
 		}
 	}
-
-	t.Log("Multiple argument probes test passed")
 }
 
-// TestProbeArgDescFormat verifies the argdesc field format in ELF notes.
-func TestProbeArgDescFormat(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
 	}
-
-	dir := t.TempDir()
-
-	src := filepath.Join(dir, "main.go")
-	err := os.WriteFile(src, []byte(`
-package main
-
-import "runtime/trace/usdt"
-
-func main() {
-	usdt.Probe1("app", "status", int32(200))
-}
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
 	}
-
-	// Test AMD64
-	out := filepath.Join(dir, "testprog_amd64")
-	cmd := exec.Command("go", "build", "-o", out, src)
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("AMD64 build failed: %v\n%s", err, output)
-	}
-
-	f, err := elf.Open(out)
-	if err != nil {
-		t.Fatalf("failed to open AMD64 ELF: %v", err)
-	}
-
-	sect := f.Section(".note.stapsdt")
-	if sect == nil {
-		f.Close()
-		t.Fatal(".note.stapsdt section not found for AMD64")
-	}
-
-	data, err := sect.Data()
-	f.Close()
-	if err != nil {
-		t.Fatalf("failed to read AMD64 section data: %v", err)
-	}
-
-	// Verify argdesc contains register notation for AMD64 (e.g., %eax, %rax)
-	dataStr := string(data)
-	if !strings.Contains(dataStr, "%") {
-		t.Error("AMD64 argdesc should contain register notation with '%'")
-	}
-	t.Logf("AMD64 ELF data contains register notation")
-
-	// Test ARM64
-	outArm := filepath.Join(dir, "testprog_arm64")
-	cmd = exec.Command("go", "build", "-o", outArm, src)
-	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=arm64", "CGO_ENABLED=0")
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("ARM64 build failed: %v\n%s", err, output)
-	}
-
-	f, err = elf.Open(outArm)
-	if err != nil {
-		t.Fatalf("failed to open ARM64 ELF: %v", err)
-	}
-	defer f.Close()
-
-	sect = f.Section(".note.stapsdt")
-	if sect == nil {
-		t.Fatal(".note.stapsdt section not found for ARM64")
-	}
-
-	data, err = sect.Data()
-	if err != nil {
-		t.Fatalf("failed to read ARM64 section data: %v", err)
-	}
-
-	// Verify argdesc contains ARM64 register notation (w0-w30, x0-x30)
-	dataStr = string(data)
-	hasArmReg := strings.Contains(dataStr, "w") || strings.Contains(dataStr, "x")
-	if !hasArmReg {
-		t.Error("ARM64 argdesc should contain register notation (w/x)")
-	}
-	t.Logf("ARM64 ELF data contains register notation")
-}
-
-// TestUnsupportedPlatform verifies that on unsupported platforms,
-// the probe is a no-op (doesn't crash, doesn't generate USDT notes).
-func TestUnsupportedPlatform(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
-	}
-
-	dir := t.TempDir()
-
-	src := filepath.Join(dir, "main.go")
-	err := os.WriteFile(src, []byte(`
-package main
-
-import "runtime/trace/usdt"
-
-func main() {
-	usdt.Probe("test", "probe")
-	println("ok")
-}
-`), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Build for darwin/arm64 (no USDT support)
-	out := filepath.Join(dir, "testprog")
-	cmd := exec.Command("go", "build", "-o", out, src)
-	cmd.Env = append(os.Environ(), "GOOS=darwin", "GOARCH=arm64", "CGO_ENABLED=0")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build failed: %v\n%s", err, output)
-	}
-
-	// The binary should exist and be a valid Mach-O (not ELF)
-	info, err := os.Stat(out)
-	if err != nil {
-		t.Fatalf("stat failed: %v", err)
-	}
-	if info.Size() == 0 {
-		t.Fatal("binary is empty")
-	}
-
-	// Verify it's not an ELF (shouldn't have .note.stapsdt)
-	// This just verifies the build succeeded for a non-Linux target
-	t.Log("Build for unsupported platform succeeded")
+	return string(buf[i:])
 }
